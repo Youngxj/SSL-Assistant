@@ -142,6 +142,8 @@ func findNginxConfigs() {
 		"D:\\nginx\\conf\\nginx.conf",
 	}
 
+	//TODO 增加宝塔面板的配置文件路径
+
 	fmt.Println("正在寻找 Nginx 配置文件...")
 
 	for _, path := range paths {
@@ -284,6 +286,8 @@ func getCertificateInfo(domain string) (Certificate, error) {
 	if err != nil {
 		panic(err)
 	}
+
+	//TODO 如果云端证书与本地证书序列号一致，则不重新下载证书
 
 	fmt.Println("\n=============== 证书信息 start cert ===============")
 	fmt.Printf("组织(O): %s %s\n", endCert.Issuer.Organization[0], endCert.Issuer.CommonName)
