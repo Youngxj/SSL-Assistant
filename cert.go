@@ -527,7 +527,7 @@ func modifyRestartCmd() error {
 // 更新证书
 func updateCertificates() error {
 	// 获取所有证书
-	certificates, err := getAllCertificates()
+	certificates, err := dbInterface.GetAllCertificates()
 	if err != nil {
 		return fmt.Errorf("获取证书信息失败: %s", err)
 	}
