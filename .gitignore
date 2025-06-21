@@ -1,0 +1,20 @@
+# Go项目临时文件和编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# 临时文件
+*.log
+tmp/
+temp/
+cert/
+
+# Go工作区文件
+go.work
+
+# 由goreleaser init添加:
+dist/
