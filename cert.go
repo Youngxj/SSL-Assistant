@@ -118,7 +118,7 @@ func initConfig() {
 		return
 	}
 
-	err = dbInterface.SaveConfig("restart_cmd", restartCmd)
+	err = dbInterface.SaveConfig("restartCmd", restartCmd)
 	if err != nil {
 		fmt.Println("保存重载命令失败:", err)
 		return
@@ -225,7 +225,7 @@ func parseNginxConfig(path string) {
 func getCertificateInfo(domain string) (Certificate, error) {
 	var cert Certificate
 
-	configs, err := dbInterface.GetConfigs([]string{"KeyId", "KeySecret", "restart_cmd", "ApiUrl"})
+	configs, err := dbInterface.GetConfigs([]string{"KeyId", "KeySecret", "restartCmd", "ApiUrl"})
 	if err != nil {
 		return cert, fmt.Errorf("获取配置失败: %v", err)
 	}
@@ -456,7 +456,7 @@ func showCertificates() {
 				}
 				continue
 			case "9": // 获取配置（测试）
-				config, err := dbInterface.GetConfigs([]string{"KeyId", "KeySecret", "restart_cmd", "ApiUrl"})
+				config, err := dbInterface.GetConfigs([]string{"KeyId", "KeySecret", "restartCmd", "ApiUrl"})
 				if err != nil {
 					color.Red("获取配置失败: %s", err)
 					return
@@ -505,7 +505,7 @@ func modifyKey() error {
 
 // 修改重载命令
 func modifyRestartCmd() error {
-	restartCmd, _ := dbInterface.GetConfig("restart_cmd")
+	restartCmd, _ := dbInterface.GetConfig("restartCmd")
 	fmt.Printf("当前重载命令: %s\n", color.CyanString(restartCmd))
 	fmt.Printf("请输入新的重载命令(如: %s): ", defaultReloadCmd)
 	scanner := bufio.NewScanner(os.Stdin)
@@ -514,7 +514,7 @@ func modifyRestartCmd() error {
 		if newCmd == "" {
 			newCmd = defaultReloadCmd
 		}
-		err := dbInterface.SaveConfig("restart_cmd", newCmd)
+		err := dbInterface.SaveConfig("restartCmd", newCmd)
 		if err != nil {
 			return fmt.Errorf("保存重载命令失败: %s", err)
 		} else {
@@ -600,8 +600,11 @@ func updateCertificateFiles(cert Certificate) error {
 // 执行重载命令
 func executeRestartCmd() error {
 	// 获取重载命令
-	restartCmd, err := dbInterface.GetConfig("restart_cmd")
+	restartCmd, err := dbInterface.GetConfig("restartCmd")
 	if err != nil {
+		if err.Error() == "Key not found" {
+			return fmt.Errorf("重载命令不存在，请重新初始化")
+		}
 		return fmt.Errorf("获取重载命令失败: %s", err)
 	}
 
