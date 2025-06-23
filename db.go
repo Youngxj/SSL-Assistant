@@ -3,11 +3,9 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	_ "github.com/mattn/go-sqlite3"
 	"os"
 	"path/filepath"
-	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 var db *sql.DB
@@ -39,8 +37,8 @@ func initDB() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			domain TEXT NOT NULL,
 			status TEXT NOT NULL,
-			create_time DATETIME NOT NULL,
-			expire_time DATETIME NOT NULL,
+			create_time INTEGER NOT NULL,
+			expire_time INTEGER NOT NULL,
 			public_key TEXT NOT NULL,
 			private_key TEXT NOT NULL,
 			cert_path TEXT NOT NULL,
@@ -98,15 +96,15 @@ func getAllCertificates() ([]Certificate, error) {
 	var certificates []Certificate
 	for rows.Next() {
 		var cert Certificate
-		var createTime, expireTime string
+		var createTime, expireTime int64
 		err := rows.Scan(&cert.ID, &cert.Domain, &cert.Status, &createTime, &expireTime, &cert.PublicKey, &cert.PrivateKey, &cert.CertPath, &cert.KeyPath)
 		if err != nil {
 			return nil, err
 		}
 
 		// 解析时间
-		cert.CreateTime, _ = time.Parse(time.DateTime, createTime)
-		cert.ExpireTime, _ = time.Parse(time.DateTime, expireTime)
+		cert.CreateTime = createTime
+		cert.ExpireTime = expireTime
 
 		certificates = append(certificates, cert)
 	}
@@ -117,7 +115,7 @@ func getAllCertificates() ([]Certificate, error) {
 // 获取证书
 func getCertificate(id int) (Certificate, error) {
 	var cert Certificate
-	var createTime, expireTime string
+	var createTime, expireTime int64
 	err := db.QueryRow(
 		"SELECT id, domain, status, create_time, expire_time, public_key, private_key, cert_path, key_path FROM certificates WHERE id = ?",
 		id,
@@ -125,17 +123,8 @@ func getCertificate(id int) (Certificate, error) {
 	if err != nil {
 		return cert, err
 	}
-
-	// 解析时间，处理错误
-	var parseErr error
-	cert.CreateTime, parseErr = time.Parse(time.DateTime, createTime)
-	if parseErr != nil {
-		return cert, parseErr
-	}
-	cert.ExpireTime, parseErr = time.Parse(time.DateTime, expireTime)
-	if parseErr != nil {
-		return cert, parseErr
-	}
+	cert.CreateTime = createTime
+	cert.ExpireTime = expireTime
 
 	return cert, nil
 }

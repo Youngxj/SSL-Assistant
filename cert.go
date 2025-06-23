@@ -315,11 +315,13 @@ func getCertificateInfo(domain string) (Certificate, error) {
 
 	// 设置证书信息
 	cert.Domain = domain
-	cert.Status = "有效"
-	createTime := endCert.NotBefore.UTC()
-	cert.CreateTime = createTime
-	expireTime := endCert.NotAfter.UTC()
-	cert.ExpireTime = expireTime
+	cert.CreateTime = endCert.NotBefore.UTC().Unix()
+	cert.ExpireTime = endCert.NotAfter.UTC().Unix()
+	if cert.ExpireTime < time.Now().Unix() {
+		cert.Status = "过期"
+	} else {
+		cert.Status = "有效"
+	}
 	cert.PublicKey = apiResp.Data.Oc
 	cert.PrivateKey = apiResp.Data.Key
 
@@ -414,8 +416,8 @@ func getCertificates() {
 			strconv.Itoa(cert.ID),
 			cert.Domain,
 			cert.Status,
-			cert.CreateTime.Format(time.DateTime),
-			cert.ExpireTime.Format(time.DateTime),
+			time.Unix(cert.CreateTime, 0).Format(time.DateTime),
+			time.Unix(cert.ExpireTime, 0).Format(time.DateTime),
 			cert.CertPath,
 			cert.KeyPath,
 		})

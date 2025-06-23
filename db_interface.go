@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/fatih/color"
-	"time"
 )
 
 // DBInterface 数据库接口定义
@@ -21,15 +20,15 @@ type DBInterface interface {
 
 // Certificate 证书信息结构体
 type Certificate struct {
-	ID         int       // 证书 ID
-	Domain     string    // 域名
-	Status     string    // 状态
-	CreateTime time.Time // 创建时间
-	ExpireTime time.Time // 过期时间
-	PublicKey  string    // 公钥
-	PrivateKey string    // 私钥
-	CertPath   string    // 证书路径
-	KeyPath    string    // 私钥路径
+	ID         int    // 证书 ID
+	Domain     string // 域名
+	Status     string // 状态
+	CreateTime int64  // 创建时间
+	ExpireTime int64  // 过期时间
+	PublicKey  string // 公钥
+	PrivateKey string // 私钥
+	CertPath   string // 证书路径
+	KeyPath    string // 私钥路径
 }
 
 // SQLiteDB SQLite实现
