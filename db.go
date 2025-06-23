@@ -21,13 +21,13 @@ func initDB() error {
 	}
 
 	// 创建数据目录
-	dataDir := filepath.Join(homeDir, ".certdssl")
+	dataDir := filepath.Join(homeDir, ".ssl_assistant")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("创建数据目录失败: %v", err)
 	}
 
 	// 打开数据库
-	dbPath := filepath.Join(dataDir, "certdssl.db")
+	dbPath := filepath.Join(dataDir, "ssl_assistant.db")
 	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return fmt.Errorf("打开数据库失败: %v", err)
@@ -105,8 +105,8 @@ func getAllCertificates() ([]Certificate, error) {
 		}
 
 		// 解析时间
-		cert.CreateTime, _ = time.Parse("2006-01-02 15:04:05", createTime)
-		cert.ExpireTime, _ = time.Parse("2006-01-02 15:04:05", expireTime)
+		cert.CreateTime, _ = time.Parse(time.DateTime, createTime)
+		cert.ExpireTime, _ = time.Parse(time.DateTime, expireTime)
 
 		certificates = append(certificates, cert)
 	}
@@ -128,11 +128,11 @@ func getCertificate(id int) (Certificate, error) {
 
 	// 解析时间，处理错误
 	var parseErr error
-	cert.CreateTime, parseErr = time.Parse("2006-01-02 15:04:05", createTime)
+	cert.CreateTime, parseErr = time.Parse(time.DateTime, createTime)
 	if parseErr != nil {
 		return cert, parseErr
 	}
-	cert.ExpireTime, parseErr = time.Parse("2006-01-02 15:04:05", expireTime)
+	cert.ExpireTime, parseErr = time.Parse(time.DateTime, expireTime)
 	if parseErr != nil {
 		return cert, parseErr
 	}

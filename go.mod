@@ -1,4 +1,4 @@
-module certdssl
+module ssl_assistant
 
 go 1.20
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/fatih/color"
 	"time"
 )
 
@@ -137,7 +138,7 @@ func initDatabase() error {
 	if err != nil {
 		// 如果SQLite初始化失败，尝试使用BadgerDB
 		fmt.Println("SQLite数据库初始化失败:", err)
-		fmt.Println("尝试使用纯Go实现的BadgerDB作为替代...")
+		color.Cyan("尝试使用纯Go实现的BadgerDB作为替代...\n")
 
 		err = initBadgerDB()
 		if err != nil {
@@ -146,7 +147,7 @@ func initDatabase() error {
 
 		// 使用BadgerDB实现
 		dbInterface = &BadgerImpl{}
-		fmt.Println("成功切换到BadgerDB")
+		color.Green("成功切换到BadgerDB\n")
 	} else {
 		// 使用SQLite实现
 		dbInterface = &SQLiteDB{}

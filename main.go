@@ -9,9 +9,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "certdssl",
+	Use:   "ssl_assistant",
 	Short: "证书管理工具",
-	Long:  `certdssl 是一个基于 Go 语言开发的跨平台工具，主要功能是主动获取、更新证书信息，并通过命令行执行。`,
+	Long:  `sslAssistant 是一个基于 Go 语言开发的跨平台工具，主要功能是主动获取、更新证书信息，并通过命令行执行。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// 如果没有子命令，则显示帮助信息
 		cmd.Help()
@@ -58,7 +58,11 @@ var showCmd = &cobra.Command{
 	Short: "查看证书",
 	Long:  `查看证书，显示证书信息的表格，包括 ID、域名、状态、创建时间、过期时间、公钥、私钥等信息。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		showCertificates()
+		err := showCertificates()
+		if err != nil {
+			color.Red("%s", err)
+			return
+		}
 	},
 }
 
@@ -85,15 +89,17 @@ func init() {
 }
 
 func main() {
-	// 初始化数据库（会自动选择SQLite或BadgerDB）
-	err := initDatabase()
-	if err != nil {
-		fmt.Println("初始化数据库失败:", err)
-		os.Exit(1)
-	}
+	if len(os.Args) > 1 && os.Args[1] != "version" {
+		// 初始化数据库（会自动选择SQLite或BadgerDB）
+		err := initDatabase()
+		if err != nil {
+			fmt.Println("初始化数据库失败:", err)
+			os.Exit(1)
+		}
 
-	// 确保程序退出时关闭数据库
-	defer dbInterface.Close()
+		// 确保程序退出时关闭数据库
+		defer dbInterface.Close()
+	}
 
 	// 执行命令
 	if err := rootCmd.Execute(); err != nil {

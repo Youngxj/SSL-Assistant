@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"certdssl/utils"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -16,16 +15,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"ssl_assistant/utils"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config 配置信息结构体
 type Config struct {
-	ApiUrl     string `json:"api_url"`     // API 地址
-	KeyId      string `json:"key_id"`      // 证书信息获取的凭证
-	KeySecret  string `json:"key_secret"`  // 证书信息获取的凭证
-	RestartCmd string `json:"restart_cmd"` // 证书更新后需要执行的命令
+	ApiUrl     string `json:"ApiUrl"`     // API 地址
+	KeyId      string `json:"KeyId"`      // 证书信息获取的凭证
+	KeySecret  string `json:"KeySecret"`  // 证书信息获取的凭证
+	RestartCmd string `json:"RestartCmd"` // 证书更新后需要执行的命令
+	IsInit     bool   `json:"IsInit"`     // 是否已经初始化
 }
 
 // ApiResponse API 响应结构体
@@ -49,9 +51,14 @@ var defaultReloadCmd string = "nginx -s reload"
 // 初始化配置
 func initConfig() {
 	// 检查是否已经初始化
-	KeyId, err := dbInterface.GetConfig("KeyId")
-	if err == nil && KeyId != "" {
-		fmt.Println("程序已经初始化，是否重新初始化？(y/n)")
+	isInit := checkInit()
+	if isInit {
+		err := getConfigInfo()
+		if err != nil {
+			color.Red("%s", err)
+			return
+		}
+		fmt.Print("程序已经初始化，是否重新初始化？(y/n): ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
@@ -81,7 +88,7 @@ func initConfig() {
 	// 输入KeyId
 	fmt.Print("请输入 KeyId: ")
 	reader = bufio.NewReader(os.Stdin)
-	KeyId, _ = reader.ReadString('\n')
+	KeyId, _ := reader.ReadString('\n')
 	KeyId = strings.TrimSpace(KeyId)
 
 	// 输入KeyId
@@ -99,7 +106,7 @@ func initConfig() {
 	}
 
 	// 保存配置
-	err = dbInterface.SaveConfig("ApiUrl", ApiUrl)
+	err := dbInterface.SaveConfig("ApiUrl", ApiUrl)
 	if err != nil {
 		fmt.Println("保存 ApiUrl 失败:", err)
 		return
@@ -123,7 +130,13 @@ func initConfig() {
 		return
 	}
 
-	fmt.Println("初始化成功")
+	err = dbInterface.SaveConfig("IsInit", "true")
+	if err != nil {
+		fmt.Println("保存初始化状态失败:", err)
+		return
+	}
+
+	color.Green("初始化成功")
 
 	// 寻找 Nginx 配置文件
 	findNginxConfigs()
@@ -145,7 +158,7 @@ func findNginxConfigs() {
 
 	//TODO 增加宝塔面板的配置文件路径
 
-	fmt.Println("正在寻找 Nginx 配置文件...")
+	color.Cyan("正在寻找 Nginx 配置文件...")
 
 	for _, path := range paths {
 		// 如果路径包含通配符，则使用 Glob 函数
@@ -198,7 +211,7 @@ func parseNginxConfig(path string) {
 			domains := strings.Fields(serverName)
 			if len(domains) > 0 {
 				domain := domains[0]
-				fmt.Printf("找到域名: %s, 证书: %s, 私钥: %s\n", domain, sslCert, sslKey)
+				color.Cyan("找到域名: %s, 证书: %s, 私钥: %s\n", domain, sslCert, sslKey)
 
 				// 获取证书信息
 				cert, err := getCertificateInfo(domain)
@@ -218,7 +231,7 @@ func parseNginxConfig(path string) {
 					continue
 				}
 
-				fmt.Printf("域名 %s 的证书信息已保存\n", domain)
+				color.Green("域名 %s 的证书信息已保存\n", domain)
 			}
 		}
 	}
@@ -293,8 +306,8 @@ func getCertificateInfo(domain string) (Certificate, error) {
 	fmt.Println("\n=============== 证书信息 start cert ===============")
 	fmt.Printf("组织(O): %s %s\n", endCert.Issuer.Organization[0], endCert.Issuer.CommonName)
 	fmt.Println("通用名称(CN): ", endCert.Subject.CommonName)
-	fmt.Println("证书生效时间: ", endCert.NotBefore.UTC().Format("2006-01-02 15:04:05"))
-	fmt.Println("证书过期时间: ", endCert.NotAfter.UTC().Format("2006-01-02 15:04:05"))
+	fmt.Println("证书生效时间: ", endCert.NotBefore.UTC().Format(time.DateTime))
+	fmt.Println("证书过期时间: ", endCert.NotAfter.UTC().Format(time.DateTime))
 	fmt.Println("签名算法: ", endCert.SignatureAlgorithm)
 	fmt.Println("密钥算法: ", endCert.PublicKeyAlgorithm)
 	fmt.Println("序列号: ", endCert.SerialNumber)
@@ -318,6 +331,7 @@ func getCertificateInfo(domain string) (Certificate, error) {
 
 // 添加证书
 func addCertificate() error {
+	initGuide()
 	// 输入域名
 	fmt.Print("请输入域名: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -360,6 +374,7 @@ func addCertificate() error {
 
 // 删除证书
 func deleteCertificate() error {
+	initGuide()
 	// 输入证书 ID
 	fmt.Print("请输入证书 ID: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -402,8 +417,8 @@ func getCertificates() {
 			strconv.Itoa(cert.ID),
 			cert.Domain,
 			cert.Status,
-			cert.CreateTime.Format("2006-01-02 15:04:05"),
-			cert.ExpireTime.Format("2006-01-02 15:04:05"),
+			cert.CreateTime.Format(time.DateTime),
+			cert.ExpireTime.Format(time.DateTime),
 			cert.CertPath,
 			cert.KeyPath,
 		})
@@ -412,61 +427,55 @@ func getCertificates() {
 }
 
 // 查看证书
-func showCertificates() {
+func showCertificates() error {
+	initGuide()
 	// 处理用户输入
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
 		getCertificates()
-		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、0=退出")
+		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、9=查看配置信息、0=退出")
 		fmt.Print(">>> ")
 		if scanner.Scan() {
 			input := scanner.Text()
 			switch input {
 			case "0": // 退出
-				return
+				return fmt.Errorf("程序退出")
 			case "1": // 添加证书
 				err := addCertificate()
 				if err != nil {
-					color.Red("%s", err)
-					return
+					return err
 				}
 				continue
 			case "2": // 删除证书
 				err := deleteCertificate()
 				if err != nil {
-					color.Red("%s", err)
-					return
+					return err
 				}
 				continue
 			case "3": // 修改密钥
 				err := modifyKey()
 				if err != nil {
-					color.Red("%s", err)
-					return
+					return err
 				}
 				continue
 			case "4": // 修改重载命令
 				err := modifyRestartCmd()
 				if err != nil {
-					color.Red("%s", err)
-					return
+					return err
 				}
 				continue
 			case "5": // 更新证书
 				err := updateCertificates()
 				if err != nil {
-					color.Red("%s", err)
-					return
+					return err
 				}
 				continue
 			case "9": // 获取配置（测试）
-				config, err := dbInterface.GetConfigs([]string{"KeyId", "KeySecret", "restartCmd", "ApiUrl"})
+				err := getConfigInfo()
 				if err != nil {
-					color.Red("获取配置失败: %s", err)
-					return
+					return err
 				}
-				fmt.Println("config", config)
 			default:
 				fmt.Println("无效的输入，请重新输入")
 				continue
@@ -486,7 +495,7 @@ func modifyKey() error {
 	KeyId, _ := reader.ReadString('\n')
 	KeyId = strings.TrimSpace(KeyId)
 
-	// 输入KeyId
+	// 输入KeySecret
 	fmt.Print("请输入 KeySecret: ")
 	reader = bufio.NewReader(os.Stdin)
 	KeySecret, _ := reader.ReadString('\n')
@@ -531,6 +540,7 @@ func modifyRestartCmd() error {
 
 // 更新证书
 func updateCertificates() error {
+	initGuide()
 	// 获取所有证书
 	certificates, err := dbInterface.GetAllCertificates()
 	if err != nil {
@@ -628,4 +638,40 @@ func executeRestartCmd() error {
 
 	color.Green("执行重载命令成功: %s\n", output)
 	return err
+}
+
+// 获取配置信息
+func getConfigInfo() error {
+	config, err := dbInterface.GetConfigs([]string{"ApiUrl", "KeyId", "KeySecret", "restartCmd"})
+	if err != nil {
+		return fmt.Errorf("获取配置失败: %s", err)
+	}
+	for key, value := range config {
+		if key == "KeySecret" {
+			value = "********"
+		}
+		color.Cyan("%s: %s\n", key, value)
+	}
+	return err
+}
+
+// 检查是否初始化
+func checkInit() bool {
+	isInit, err := dbInterface.GetConfig("IsInit")
+	if err != nil {
+		return false
+	}
+	if isInit == "true" {
+		return true
+	} else {
+		return false
+	}
+}
+
+// 初始化引导
+func initGuide() {
+	if !checkInit() {
+		color.Red("程序未初始化，现在开始初始化流程")
+		initConfig()
+	}
 }
