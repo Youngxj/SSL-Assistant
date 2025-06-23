@@ -222,6 +222,8 @@ func parseNginxConfig(path string) {
 				cert.CertPath = sslCert
 				cert.KeyPath = sslKey
 
+				cert.CertSource = "certd"
+
 				// 保存证书信息
 				err = dbInterface.AddCertificate(cert)
 				if err != nil {
@@ -354,6 +356,7 @@ func addCertificate() error {
 	keyPath, _ := reader.ReadString('\n')
 	keyPath = strings.TrimSpace(keyPath)
 	cert.KeyPath = keyPath
+	cert.CertSource = "certd"
 
 	// 保存证书信息
 	err = dbInterface.AddCertificate(cert)
@@ -410,7 +413,7 @@ func getCertificates() {
 
 	// 显示证书信息表格
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "域名", "状态", "创建时间", "过期时间", "公钥", "私钥"})
+	table.SetHeader([]string{"ID", "域名", "状态", "创建时间", "过期时间", "来源", "公钥", "私钥"})
 	for _, cert := range certs {
 		table.Append([]string{
 			strconv.Itoa(cert.ID),
@@ -418,6 +421,7 @@ func getCertificates() {
 			cert.Status,
 			time.Unix(cert.CreateTime, 0).Format(time.DateTime),
 			time.Unix(cert.ExpireTime, 0).Format(time.DateTime),
+			cert.CertSource,
 			cert.CertPath,
 			cert.KeyPath,
 		})

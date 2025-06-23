@@ -29,6 +29,7 @@ type Certificate struct {
 	PrivateKey string // 私钥
 	CertPath   string // 证书路径
 	KeyPath    string // 私钥路径
+	CertSource string // 证书来源：certd
 }
 
 // SQLiteDB SQLite实现
