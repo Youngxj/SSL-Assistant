@@ -133,6 +133,8 @@ func initConfig() {
 func findNginxConfigs() {
 	// 常见的 Nginx 配置文件路径
 	paths := []string{
+		"/www/server/panel/vhost/nginx/*.conf",                             // 宝塔
+		"D:\\phpstudy_pro\\Extensions\\Nginx1.15.11\\conf\\vhosts\\*.conf", // 小皮（Windows）
 		"/etc/nginx/nginx.conf",
 		"/etc/nginx/conf.d/*.conf",
 		"/usr/local/nginx/conf/nginx.conf",
