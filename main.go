@@ -8,10 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var Version string
+
 var rootCmd = &cobra.Command{
 	Use:   "ssl_assistant",
 	Short: "证书管理工具",
-	Long:  `sslAssistant 是一个基于 Go 语言开发的跨平台工具，主要功能是主动获取、更新证书信息，并通过命令行执行。`,
+	Long:  `sslAssistant` + Version + ` 是一个基于 Go 语言开发的跨平台工具，主要功能是主动获取、更新证书信息，并通过命令行执行。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// 如果没有子命令，则显示帮助信息
 		cmd.Help()
@@ -79,6 +81,15 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "显示版本信息",
+	Long:  `显示版本信息，包括程序名称、版本号、编译时间等。`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("sslAssistant" + Version)
+	},
+}
+
 func init() {
 	// 添加子命令
 	rootCmd.AddCommand(initCmd)
@@ -86,6 +97,7 @@ func init() {
 	rootCmd.AddCommand(delCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(updateCmd)
+	rootCmd.AddCommand(versionCmd)
 }
 
 func main() {
