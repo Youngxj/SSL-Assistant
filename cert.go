@@ -11,7 +11,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -171,7 +170,7 @@ func parseNginxConfig(path string) {
 	fmt.Println("解析配置文件:", path)
 
 	// 读取配置文件
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Println("读取配置文件失败:", err)
 		return
