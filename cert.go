@@ -156,8 +156,6 @@ func findNginxConfigs() {
 		"D:\\nginx\\conf\\nginx.conf",
 	}
 
-	//TODO 增加宝塔面板的配置文件路径
-
 	color.Cyan("正在寻找 Nginx 配置文件...")
 
 	for _, path := range paths {
