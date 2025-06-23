@@ -245,7 +245,6 @@ func getCertificateInfo(domain string) (Certificate, error) {
 	}
 	//计算token
 	token := utils.GetEncodeToken(configs["KeyId"], configs["KeySecret"])
-	fmt.Println("token", token)
 
 	var ApiPostDataJson = []byte(`{
 		"domains": "` + domain + `"
