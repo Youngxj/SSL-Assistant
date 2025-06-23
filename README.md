@@ -11,17 +11,33 @@ Windows 和 Linux 平台，可以自动寻找 Nginx 服务对应站点的配置�
 - 跨平台支持：同时支持 Windows 和 Linux 系统
 - 自动化管理：自动寻找 Nginx 配置文件（已兼容宝塔面板），获取域名和证书信息
 - 证书更新：主动拉取远程证书信息，自动更新证书部署，并执行重载命令
-    - [x] [Certd](https://github.com/certd/certd) 流水线申请部署证书工具
-    - [ ] 未来将支持更多平台……
 - 命令行操作：提供简单易用的命令行界面
 - 本地存储：使用 SQLite / BadgerDB 数据库存储证书信息
+
+## TODO
+
+- [x] 支持 Windows 和 Linux 平台
+- [ ] 手动指定 Nginx 配置目录
+- 支持自动寻找 Nginx 配置文件
+    - [x] 原生Nginx环境
+    - [x] [宝塔面板](https://bt.cn)
+    - [x] [小皮面板Windows](https://www.xp.cn)
+    - [ ] [小皮面板](https://www.xp.cn)
+    - [ ] [1Panel](https://1panel.cn)
+- [x] 支持自动获取证书信息
+- 支持更多证书申请管理工具
+    - [x] [Certd](https://github.com/certd/certd) 流水线申请部署证书工具
+    - [ ] [ALLinSSL](https://allinssl.com/)
+    - [ ] 更多……
+- [ ] 本地证书与云端证书一致性校验，一致的话则不更新证书，减少重载次数
+- [ ] 内部配置定时更新任务，支持每天或每周更新证书
 
 ## 安装与使用
 
 1. 下载对应平台的运行文件 [Releases](https://github.com/Youngxj/SSL-Assistant/releases)
-2. 运行程序：`SSL-Assistant init`根据提示完成初始化配置，填写API地址、API密钥、重载命令等信息
-3. 添加证书：输入域名，程序会自动根据域名获取证书信息，并将证书信息保存到数据库中，以便后面的更新操作
-4. 定期更新：可使用Crontab设置定时任务，自动更新证书
+2. 运行程序：`SSL-Assistant init` 根据提示完成初始化配置，填写API地址、API密钥、重载命令等信息
+3. 添加证书：`SSL-Assistant add` 输入域名，程序会自动根据域名获取证书信息，并将证书信息保存到数据库中，以便后面的更新操作
+4. 定期更新：可使用Crontab设置定时任务定期执行`SSL-Assistant update` ，自动更新部署证书
 
 ## 开发流程
 
