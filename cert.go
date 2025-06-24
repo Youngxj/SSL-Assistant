@@ -460,14 +460,16 @@ func getCertificates() {
 
 	// 显示证书信息表格
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "域名", "状态", "创建时间", "过期时间", "来源", "公钥", "私钥"})
+	table.SetHeader([]string{"ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "公钥", "私钥"})
 	for _, cert := range certs {
+		expireDay := time.Now().Sub(time.Unix(cert.CreateTime, 0))
 		table.Append([]string{
 			strconv.Itoa(cert.ID),
 			cert.Domain,
 			cert.Status,
-			time.Unix(cert.CreateTime, 0).Format(time.DateTime),
-			time.Unix(cert.ExpireTime, 0).Format(time.DateTime),
+			time.Unix(cert.CreateTime, 0).Format(time.DateOnly),
+			time.Unix(cert.ExpireTime, 0).Format(time.DateOnly),
+			strconv.FormatInt(int64(expireDay.Hours()/24), 10),
 			cert.CertSource,
 			cert.CertPath,
 			cert.KeyPath,
@@ -678,7 +680,7 @@ func updateCertificates() error {
 	}
 
 	if updateNum == 0 {
-		color.Yellow("没有需要更新的证书")
+		color.Yellow("本次没有需要更新的证书")
 	} else {
 		// 执行重载命令
 		err = executeRestartCmd()
