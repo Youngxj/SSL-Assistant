@@ -23,11 +23,12 @@ import (
 
 // Config 配置信息结构体
 type Config struct {
-	ApiUrl     string `json:"ApiUrl"`     // API 地址
-	KeyId      string `json:"KeyId"`      // 证书信息获取的凭证
-	KeySecret  string `json:"KeySecret"`  // 证书信息获取的凭证
-	RestartCmd string `json:"RestartCmd"` // 证书更新后需要执行的命令
-	IsInit     bool   `json:"IsInit"`     // 是否已经初始化
+	ApiUrl              string `json:"ApiUrl"`              // API 地址
+	KeyId               string `json:"KeyId"`               // 证书信息获取的凭证
+	KeySecret           string `json:"KeySecret"`           // 证书信息获取的凭证
+	RestartCmd          string `json:"restartCmd"`          // 证书更新后需要执行的命令
+	IsInit              bool   `json:"IsInit"`              // 是否已经初始化
+	BeforeExpirationDay int    `json:"BeforeExpirationDay"` // 证书过期前多少天更新
 }
 
 // ApiResponse API 响应结构体
@@ -57,8 +58,8 @@ var defaultNginxPaths = []string{
 	"D:\\nginx\\conf\\nginx.conf",
 }
 
-// 默认重载命令
-var defaultReloadCmd string = "nginx -s reload"
+var defaultReloadCmd string = "nginx -s reload" // 默认重载命令
+var defaultBeforeExpirationDay int16 = 10       // 默认证书过期前10天更新
 
 // 初始化配置
 func initConfig() {
@@ -103,7 +104,7 @@ func initConfig() {
 	KeyId, _ := reader.ReadString('\n')
 	KeyId = strings.TrimSpace(KeyId)
 
-	// 输入KeyId
+	// 输入KeySecret
 	fmt.Print("请输入 KeySecret: ")
 	reader = bufio.NewReader(os.Stdin)
 	KeySecret, _ := reader.ReadString('\n')
@@ -115,6 +116,14 @@ func initConfig() {
 	restartCmd = strings.TrimSpace(restartCmd)
 	if restartCmd == "" {
 		restartCmd = defaultReloadCmd
+	}
+
+	// 输入提前更新天数
+	fmt.Printf("请输入证书提前更新天数(默认: %d天): ", defaultBeforeExpirationDay)
+	ExpirationDay, _ := reader.ReadString('\n')
+	ExpirationDay = strings.TrimSpace(ExpirationDay)
+	if ExpirationDay == "" {
+		ExpirationDay = strconv.Itoa(int(defaultBeforeExpirationDay))
 	}
 
 	// 保存配置
@@ -139,6 +148,12 @@ func initConfig() {
 	err = dbInterface.SaveConfig("restartCmd", restartCmd)
 	if err != nil {
 		fmt.Println("保存重载命令失败:", err)
+		return
+	}
+
+	err = dbInterface.SaveConfig("BeforeExpirationDay", ExpirationDay)
+	if err != nil {
+		fmt.Println("保存过期前天数失败:", err)
 		return
 	}
 
@@ -469,7 +484,7 @@ func showCertificates() error {
 
 	for {
 		getCertificates()
-		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、9=查看配置信息、0=退出")
+		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、9=查看配置信息、0=退出")
 		fmt.Print(">>> ")
 		if scanner.Scan() {
 			input := scanner.Text()
@@ -502,6 +517,12 @@ func showCertificates() error {
 				continue
 			case "5": // 更新证书
 				err := updateCertificates()
+				if err != nil {
+					return err
+				}
+				continue
+			case "6": // 更新到期检查时间
+				err := modifyExpirationDay()
 				if err != nil {
 					return err
 				}
@@ -573,6 +594,27 @@ func modifyRestartCmd() error {
 	return nil
 }
 
+// 修改过期前检查天数
+func modifyExpirationDay() error {
+	ExpirationDay, _ := dbInterface.GetConfig("BeforeExpirationDay")
+	fmt.Printf("当前过期前天数: %s\n", color.CyanString(ExpirationDay))
+	fmt.Printf("请输入新的过期前天数(如: %d): ", defaultBeforeExpirationDay)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		newDay, _ := strconv.Atoi(scanner.Text())
+		if newDay == 0 {
+			newDay = int(defaultBeforeExpirationDay)
+		}
+		err := dbInterface.SaveConfig("BeforeExpirationDay", strconv.Itoa(newDay))
+		if err != nil {
+			return fmt.Errorf("保存过期前天数失败: %s", err)
+		} else {
+			color.Green("过期前天数已修改成: %s", color.CyanString(strconv.Itoa(newDay)))
+		}
+	}
+	return nil
+}
+
 // 更新证书
 func updateCertificates() error {
 	initGuide()
@@ -582,14 +624,36 @@ func updateCertificates() error {
 		return fmt.Errorf("获取证书信息失败: %s", err)
 	}
 
+	updateNum := 0
 	// 更新每个证书
 	for _, cert := range certificates {
 		fmt.Printf("正在更新域名 %s 的证书...\n", cert.Domain)
 
-		// 获取最新的证书信息
-		newCert, err := getCertificateInfo(cert.Domain)
+		BeforeExpirationDay, _ := dbInterface.GetConfig("BeforeExpirationDay")
+		day, err := strconv.ParseInt(BeforeExpirationDay, 10, 64)
 		if err != nil {
-			color.Red("获取域名 %s 的证书信息失败: %v\n", cert.Domain, err)
+			day = int64(defaultBeforeExpirationDay)
+		}
+		if cert.ExpireTime-86400*day > time.Now().Unix() {
+			color.Yellow("域名 %s 的证书未过期，跳过更新\n", cert.Domain)
+			continue
+		}
+
+		var newCert Certificate
+		if cert.CertSource == "certd" {
+			// 获取最新的证书信息
+			newCert, err = getCertificateInfo(cert.Domain)
+			if err != nil {
+				color.Red("获取域名 %s 的证书信息失败: %v\n", cert.Domain, err)
+				continue
+			}
+			// 比较证书信息
+			if newCert.PublicKey == cert.PublicKey && newCert.PrivateKey == cert.PrivateKey {
+				color.Yellow("域名 %s 的证书信息未更新，无需重新下载\n", cert.Domain)
+				continue
+			}
+		} else {
+			//TODO 其他平台待开发
 			continue
 		}
 
@@ -610,15 +674,21 @@ func updateCertificates() error {
 		if err != nil {
 			return err
 		}
+		updateNum++
 	}
 
-	// 执行重载命令
-	err = executeRestartCmd()
-	if err != nil {
-		return err
+	if updateNum == 0 {
+		color.Yellow("没有需要更新的证书")
+	} else {
+		// 执行重载命令
+		err = executeRestartCmd()
+		if err != nil {
+			return err
+		}
+
+		color.Green("更新证书完成")
 	}
 
-	fmt.Println("更新证书完成")
 	return err
 }
 
@@ -653,7 +723,7 @@ func executeRestartCmd() error {
 	restartCmd, err := dbInterface.GetConfig("restartCmd")
 	if err != nil {
 		if err.Error() == "Key not found" {
-			return fmt.Errorf("重载命令不存在，请重新初始化")
+			return fmt.Errorf("重载命令不存在，请先配置")
 		}
 		return fmt.Errorf("获取重载命令失败: %s", err)
 	}
@@ -677,7 +747,7 @@ func executeRestartCmd() error {
 
 // 获取配置信息
 func getConfigInfo() error {
-	config, err := dbInterface.GetConfigs([]string{"ApiUrl", "KeyId", "KeySecret", "restartCmd"})
+	config, err := dbInterface.GetConfigs([]string{"ApiUrl", "KeyId", "KeySecret", "restartCmd", "BeforeExpirationDay"})
 	if err != nil {
 		return fmt.Errorf("获取配置失败: %s", err)
 	}
@@ -712,7 +782,7 @@ func checkHasDomain(domain string) bool {
 // 初始化引导
 func initGuide() {
 	if !checkInit() {
-		color.Red("程序未初始化，现在开始初始化流程")
+		color.Yellow("程序未初始化，现在开始初始化流程")
 		initConfig()
 	}
 }
