@@ -14,6 +14,7 @@ type DBInterface interface {
 	DeleteCertificate(id int) error
 	GetAllCertificates() ([]Certificate, error)
 	GetCertificate(id int) (Certificate, error)
+	GetDomainCertificate(domain string) (Certificate, error)
 	UpdateCertificate(cert Certificate) error
 	Close()
 }
@@ -71,6 +72,9 @@ func (db *SQLiteDB) GetAllCertificates() ([]Certificate, error) {
 func (db *SQLiteDB) GetCertificate(id int) (Certificate, error) {
 	return getCertificate(id)
 }
+func (db *SQLiteDB) GetDomainCertificate(domain string) (Certificate, error) {
+	return getDomainCertificate(domain)
+}
 
 func (db *SQLiteDB) UpdateCertificate(cert Certificate) error {
 	return updateCertificateInDB(cert)
@@ -118,6 +122,9 @@ func (db *BadgerImpl) GetAllCertificates() ([]Certificate, error) {
 
 func (db *BadgerImpl) GetCertificate(id int) (Certificate, error) {
 	return getCertificateFromBadger(id)
+}
+func (db *BadgerImpl) GetDomainCertificate(domain string) (Certificate, error) {
+	return getDomainCertificateFromBadger(domain)
 }
 
 func (db *BadgerImpl) UpdateCertificate(cert Certificate) error {

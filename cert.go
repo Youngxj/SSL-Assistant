@@ -241,6 +241,11 @@ func parseNginxConfig(path string) {
 					continue
 				}
 
+				if checkHasDomain(domain) {
+					color.Yellow("域名 %s 的证书信息已存在，无需重复添加\n", domain)
+					continue
+				}
+
 				// 设置证书路径
 				cert.CertPath = sslCert
 				cert.KeyPath = sslKey
@@ -366,6 +371,10 @@ func addCertificate() error {
 	cert, err := getCertificateInfo(domain)
 	if err != nil {
 		return fmt.Errorf("获取证书信息失败: %s", err)
+	}
+
+	if checkHasDomain(domain) {
+		return fmt.Errorf("域名 %s 的证书信息已存在，无需重复添加\n", domain)
 	}
 
 	// 输入证书路径
@@ -692,6 +701,12 @@ func checkInit() bool {
 	} else {
 		return false
 	}
+}
+
+// 检查证书是否已经存在（通过域名）
+func checkHasDomain(domain string) bool {
+	certInfo, _ := dbInterface.GetDomainCertificate(domain)
+	return certInfo.Domain != ""
 }
 
 // 初始化引导

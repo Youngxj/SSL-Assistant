@@ -171,6 +171,43 @@ func getCertificateFromBadger(id int) (Certificate, error) {
 	return cert, err
 }
 
+// 从Badger获取证书（通过域名）
+func getDomainCertificateFromBadger(domain string) (Certificate, error) {
+	var cert Certificate
+	var certID int
+
+	// 第一步：通过域名获取证书 ID
+	err := badgerDB.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(fmt.Sprintf("domain:%s", domain)))
+		if err != nil {
+			return err
+		}
+
+		return item.Value(func(val []byte) error {
+			// 将获取到的 ID 字符串转换为整数
+			_, err := fmt.Sscanf(string(val), "%d", &certID)
+			return err
+		})
+	})
+	if err != nil {
+		return cert, err
+	}
+
+	// 第二步：通过证书 ID 获取完整的证书信息
+	err = badgerDB.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(fmt.Sprintf("cert:%d", certID)))
+		if err != nil {
+			return err
+		}
+
+		return item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &cert)
+		})
+	})
+
+	return cert, err
+}
+
 // 更新Badger中的证书
 func updateCertificateInBadgerDB(cert Certificate) error {
 	// 序列化证书

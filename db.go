@@ -129,6 +129,23 @@ func getCertificate(id int) (Certificate, error) {
 	return cert, nil
 }
 
+// 获取证书（通过域名）
+func getDomainCertificate(domain string) (Certificate, error) {
+	var cert Certificate
+	var createTime, expireTime int64
+	err := db.QueryRow(
+		"SELECT id, domain, status, create_time, expire_time, public_key, private_key, cert_path, key_path FROM certificates WHERE domain = ?",
+		domain,
+	).Scan(&cert.ID, &cert.Domain, &cert.Status, &createTime, &expireTime, &cert.PublicKey, &cert.PrivateKey, &cert.CertPath, &cert.KeyPath)
+	if err != nil {
+		return cert, err
+	}
+	cert.CreateTime = createTime
+	cert.ExpireTime = expireTime
+
+	return cert, nil
+}
+
 // 更新证书
 func updateCertificateInDB(cert Certificate) error {
 	_, err := db.Exec(
