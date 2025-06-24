@@ -46,6 +46,18 @@ type ApiResponse struct {
 	} `json:"data"`
 }
 
+// 常见的 Nginx 配置文件路径
+var defaultNginxPaths = []string{
+	"/www/server/panel/vhost/nginx/*.conf", // 宝塔
+	"/etc/nginx/nginx.conf",
+	"/etc/nginx/conf.d/*.conf",
+	"/usr/local/nginx/conf/nginx.conf",
+	"/usr/local/etc/nginx/nginx.conf",
+	"C:\\nginx\\conf\\nginx.conf",
+	"D:\\nginx\\conf\\nginx.conf",
+}
+
+// 默认重载命令
 var defaultReloadCmd string = "nginx -s reload"
 
 // 初始化配置
@@ -139,26 +151,37 @@ func initConfig() {
 	color.Green("初始化成功")
 
 	// 寻找 Nginx 配置文件
-	findNginxConfigs()
+	findNginxConfigs(defaultNginxPaths)
+
+	color.Yellow("已完成自动检索 Nginx 配置文件，接下来可自定义配置文件路径，如无自定义可跳过")
+	// 输入自定义Nginx配置文件路径
+	fmt.Printf("请输入 Nginx 配置文件路径(如: /etc/nginx/nginx.conf, 多个路径用空格分隔，支持通配*.conf ): \n")
+	nginxPath, _ := reader.ReadString('\n')
+	nginxPath = strings.TrimSpace(nginxPath)
+	var nginxPaths []string
+	if nginxPath != "" {
+		nginxPaths = strings.Split(nginxPath, " ")
+	}
+	if len(nginxPaths) > 0 {
+		// 寻找 Nginx 配置文件
+		findNginxConfigs(nginxPaths)
+	}
+
+	color.Green("Nginx配置文件查找完成")
+
+	err = showCertificates()
+	if err != nil {
+		color.Red("%s", err)
+		return
+	}
 }
 
 // 寻找 Nginx 配置文件
-func findNginxConfigs() {
-	// 常见的 Nginx 配置文件路径
-	paths := []string{
-		"/www/server/panel/vhost/nginx/*.conf",                             // 宝塔
-		"D:\\phpstudy_pro\\Extensions\\Nginx1.15.11\\conf\\vhosts\\*.conf", // 小皮（Windows）
-		"/etc/nginx/nginx.conf",
-		"/etc/nginx/conf.d/*.conf",
-		"/usr/local/nginx/conf/nginx.conf",
-		"/usr/local/etc/nginx/nginx.conf",
-		"C:\\nginx\\conf\\nginx.conf",
-		"D:\\nginx\\conf\\nginx.conf",
-	}
-
+func findNginxConfigs(paths []string) {
 	color.Cyan("正在寻找 Nginx 配置文件...")
 
 	for _, path := range paths {
+		fmt.Println("正在检索目录: ", path)
 		// 如果路径包含通配符，则使用 Glob 函数
 		if strings.Contains(path, "*") {
 			matches, err := filepath.Glob(path)
