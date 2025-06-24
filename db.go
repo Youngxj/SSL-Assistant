@@ -60,7 +60,6 @@ func initDB() error {
 // 保存配置信息
 func saveConfig(key, value string) error {
 	_, err := db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", key, value)
-	fmt.Println("保存配置信息成功", key, value)
 	return err
 }
 
