@@ -484,7 +484,8 @@ func showCertificates() error {
 			input := scanner.Text()
 			switch input {
 			case "0": // 退出
-				return fmt.Errorf("程序退出")
+				fmt.Println("程序退出")
+				os.Exit(0)
 			case "1": // 添加证书
 				err := addCertificate()
 				if err != nil {
@@ -538,6 +539,7 @@ func showCertificates() error {
 			}
 		} else {
 			fmt.Println("程序退出")
+			os.Exit(0)
 		}
 		fmt.Println()
 	}
