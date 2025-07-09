@@ -522,7 +522,7 @@ func showCertificates() error {
 					return err
 				}
 				continue
-			case "7": // 更新到期检查时间
+			case "7": // 快速添加域名
 				err := findNginxPathCmd()
 				if err != nil {
 					return err
