@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
+	"github.com/robfig/cron/v3"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -637,7 +639,7 @@ func updateCertificates() error {
 			day = int64(defaultBeforeExpirationDay)
 		}
 		if cert.ExpireTime-86400*day > time.Now().Unix() {
-			color.Yellow("域名 %s 的证书未过期，跳过更新\n", cert.Domain)
+			fmt.Printf("域名 %s 的证书未过期，跳过更新\n", cert.Domain)
 			continue
 		}
 
@@ -646,12 +648,12 @@ func updateCertificates() error {
 			// 获取最新的证书信息
 			newCert, err = getCertificateInfo(cert.Domain)
 			if err != nil {
-				color.Red("获取域名 %s 的证书信息失败: %v\n", cert.Domain, err)
+				fmt.Printf("获取域名 %s 的证书信息失败: %v\n", cert.Domain, err)
 				continue
 			}
 			// 比较证书信息
 			if newCert.PublicKey == cert.PublicKey && newCert.PrivateKey == cert.PrivateKey {
-				color.Yellow("域名 %s 的证书信息未更新，无需重新下载\n", cert.Domain)
+				fmt.Printf("域名 %s 的证书信息未更新，无需重新下载\n", cert.Domain)
 				continue
 			}
 		} else {
@@ -667,7 +669,7 @@ func updateCertificates() error {
 		// 更新证书信息
 		err = dbInterface.UpdateCertificate(newCert)
 		if err != nil {
-			color.Red("更新域名 %s 的证书信息失败: %v\n", cert.Domain, err)
+			fmt.Printf("更新域名 %s 的证书信息失败: %v\n", cert.Domain, err)
 			continue
 		}
 
@@ -680,7 +682,7 @@ func updateCertificates() error {
 	}
 
 	if updateNum == 0 {
-		color.Yellow("本次没有需要更新的证书")
+		fmt.Println("本次没有需要更新的证书")
 	} else {
 		// 执行重载命令
 		err = executeRestartCmd()
@@ -688,7 +690,7 @@ func updateCertificates() error {
 			return err
 		}
 
-		color.Green("更新证书完成")
+		fmt.Println("更新证书完成")
 	}
 
 	return err
@@ -715,7 +717,7 @@ func updateCertificateFiles(cert Certificate) error {
 		return fmt.Errorf("更新域名 %s 的私钥文件失败: %v\n", cert.Domain, err)
 	}
 
-	color.Green("域名 %s 的证书文件已更新\n", cert.Domain)
+	fmt.Printf("域名 %s 的证书文件已更新\n", cert.Domain)
 	return err
 }
 
@@ -773,6 +775,50 @@ func findNginxPathCmd() (err error) {
 		return
 	}
 	return err
+}
+
+// 任务计划
+func cronTask() {
+	color.Green("任务挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行")
+	defaultCronTime := "0 0 4 * * ?"
+	defaultLogFile := "./cron.log"
+	// 创建一个默认的cron对象
+	c := cron.New()
+
+	// 添加任务
+	_, err := c.AddFunc(defaultCronTime, func() {
+		logFile, err := os.OpenFile(defaultLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			fmt.Println("open log file failed, err:", err)
+			return
+		}
+		// 保存原始标准输出
+		oldStdout := os.Stdout
+		// 将标准输出重定向到文件
+		os.Stdout = logFile
+		color.Output = logFile
+		log.SetOutput(logFile)
+		log.SetFlags(log.Llongfile | log.Lmicroseconds | log.Ldate)
+		log.Println("任务开始执行")
+		log.SetPrefix("Cron: ")
+
+		err = updateCertificates()
+		if err != nil {
+			log.Println(fmt.Sprintf("任务执行失败: %s", err))
+			return
+		}
+		// 恢复标准输出
+		os.Stdout = oldStdout
+	})
+	if err != nil {
+		color.Red("添加任务调度失败: %s", err)
+		return
+	}
+	//开始执行任务
+	c.Start()
+
+	//阻塞
+	select {}
 }
 
 // 获取配置信息
