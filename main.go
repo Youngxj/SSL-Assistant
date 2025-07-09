@@ -81,6 +81,20 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+var findCmd = &cobra.Command{
+	Use:   "find",
+	Short: "快速添加域名（Nginx目录检索）",
+	Long:  `检索Nginx目录，程序会自动检索Nginx目录下的所有证书文件，并将证书文件路径保存到数据库中，用于快速添加站点`,
+	Run: func(cmd *cobra.Command, args []string) {
+		initGuide(true)
+		err := findNginxPathCmd()
+		if err != nil {
+			color.Red("%s", err)
+			return
+		}
+	},
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "显示版本信息",
@@ -98,6 +112,7 @@ func init() {
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(findCmd)
 }
 
 func main() {

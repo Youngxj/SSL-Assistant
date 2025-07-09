@@ -170,19 +170,11 @@ func initConfig() {
 
 	color.Yellow("已完成自动检索 Nginx 配置文件，接下来可自定义配置文件路径，如无自定义可跳过")
 	// 输入自定义Nginx配置文件路径
-	fmt.Printf("请输入 Nginx 配置文件路径(如: /etc/nginx/nginx.conf, 多个路径用空格分隔，支持通配*.conf ): \n")
-	nginxPath, _ := reader.ReadString('\n')
-	nginxPath = strings.TrimSpace(nginxPath)
-	var nginxPaths []string
-	if nginxPath != "" {
-		nginxPaths = strings.Split(nginxPath, " ")
+	err = findNginxPathCmd()
+	if err != nil {
+		color.Red("%s", err)
+		return
 	}
-	if len(nginxPaths) > 0 {
-		// 寻找 Nginx 配置文件
-		findNginxConfigs(nginxPaths)
-	}
-
-	color.Green("Nginx配置文件查找完成")
 
 	err = showCertificates()
 	if err != nil {
@@ -375,7 +367,7 @@ func getCertificateInfo(domain string) (Certificate, error) {
 
 // 添加证书
 func addCertificate() error {
-	initGuide()
+	initGuide(false)
 	// 输入域名
 	fmt.Print("请输入域名: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -423,7 +415,7 @@ func addCertificate() error {
 
 // 删除证书
 func deleteCertificate() error {
-	initGuide()
+	initGuide(false)
 	// 输入证书 ID
 	fmt.Print("请输入证书 ID: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -480,13 +472,13 @@ func getCertificates() {
 
 // 查看证书
 func showCertificates() error {
-	initGuide()
+	initGuide(false)
 	// 处理用户输入
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
 		getCertificates()
-		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、9=查看配置信息、0=退出")
+		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、9=查看配置信息、0=退出")
 		fmt.Print(">>> ")
 		if scanner.Scan() {
 			input := scanner.Text()
@@ -525,6 +517,12 @@ func showCertificates() error {
 				continue
 			case "6": // 更新到期检查时间
 				err := modifyExpirationDay()
+				if err != nil {
+					return err
+				}
+				continue
+			case "7": // 更新到期检查时间
+				err := findNginxPathCmd()
 				if err != nil {
 					return err
 				}
@@ -619,7 +617,7 @@ func modifyExpirationDay() error {
 
 // 更新证书
 func updateCertificates() error {
-	initGuide()
+	initGuide(false)
 	// 获取所有证书
 	certificates, err := dbInterface.GetAllCertificates()
 	if err != nil {
@@ -747,6 +745,34 @@ func executeRestartCmd() error {
 	return err
 }
 
+// 查找Nginx配置目录
+func findNginxPathCmd() (err error) {
+
+	reader := bufio.NewReader(os.Stdin)
+	// 输入自定义Nginx配置文件路径
+	fmt.Printf("请输入 Nginx 配置文件路径(如: /etc/nginx/nginx.conf, 多个路径用空格分隔，支持通配*.conf ): \n")
+	nginxPath, _ := reader.ReadString('\n')
+	nginxPath = strings.TrimSpace(nginxPath)
+	var nginxPaths []string
+	if nginxPath != "" {
+		nginxPaths = strings.Split(nginxPath, " ")
+	}
+	if len(nginxPaths) > 0 {
+		// 寻找 Nginx 配置文件
+		findNginxConfigs(nginxPaths)
+		color.Green("Nginx配置文件查找完成")
+	} else {
+		color.Yellow("目录为空，已跳过")
+	}
+
+	err = showCertificates()
+	if err != nil {
+		color.Red("%s", err)
+		return
+	}
+	return err
+}
+
 // 获取配置信息
 func getConfigInfo() error {
 	config, err := dbInterface.GetConfigs([]string{"ApiUrl", "KeyId", "KeySecret", "restartCmd", "BeforeExpirationDay"})
@@ -782,9 +808,14 @@ func checkHasDomain(domain string) bool {
 }
 
 // 初始化引导
-func initGuide() {
+func initGuide(isEnd bool) {
 	if !checkInit() {
-		color.Yellow("程序未初始化，现在开始初始化流程")
-		initConfig()
+		if !isEnd {
+			color.Yellow("程序未初始化，现在开始初始化流程")
+			initConfig()
+		} else {
+			color.Yellow("程序未初始化，请先初始化程序")
+			os.Exit(0)
+		}
 	}
 }
