@@ -1,4 +1,4 @@
-package main
+package db
 
 // 数据库类型标志
 var useBadgerDB bool

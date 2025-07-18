@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/fatih/color"
 	"os"
+	"ssl_assistant/config"
+	"ssl_assistant/db"
 
 	"github.com/spf13/cobra"
 )
@@ -127,16 +129,22 @@ func init() {
 }
 
 func main() {
+	// 初始化配置文件
+	err := config.InitConfig()
+	if err != nil {
+		fmt.Printf("初始化配置文件失败: %v\n", err)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] != "version" {
 		// 初始化数据库（会自动选择SQLite或BadgerDB）
-		err := initDatabase()
+		err := db.InitDatabase()
 		if err != nil {
 			fmt.Println("初始化数据库失败:", err)
 			os.Exit(1)
 		}
 
 		// 确保程序退出时关闭数据库
-		defer dbInterface.Close()
+		defer db.Interface.Close()
 	}
 
 	// 执行命令

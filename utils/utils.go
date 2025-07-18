@@ -2,8 +2,10 @@ package utils
 
 import (
 	"crypto/md5"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io/fs"
 	"os"
@@ -90,4 +92,34 @@ func ExistDir(path string) {
 //	@return string
 func ArrayToString(arr []string, suffix string) string {
 	return strings.Join([]string(arr), suffix)
+}
+
+// ParseCertificate 解析证书
+func ParseCertificate(endCertBytes []byte) *x509.Certificate {
+	endBlocks, _ := pem.Decode(endCertBytes)
+	if endBlocks == nil {
+		panic("failed to parse certificate PEM")
+	}
+
+	endCert, err := x509.ParseCertificate(endBlocks.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	return endCert
+}
+
+// ShowCertificateInfo 打印证书信息
+func ShowCertificateInfo(endCert *x509.Certificate) {
+	fmt.Println("\n=============== 证书信息 start cert ===============")
+	fmt.Printf("组织(O): %s %s\n", endCert.Issuer.Organization[0], endCert.Issuer.CommonName)
+	fmt.Println("通用名称(CN): ", endCert.Subject.CommonName)
+	fmt.Println("证书生效时间: ", endCert.NotBefore.UTC().Format(time.DateTime))
+	fmt.Println("证书过期时间: ", endCert.NotAfter.UTC().Format(time.DateTime))
+	fmt.Println("签名算法: ", endCert.SignatureAlgorithm)
+	fmt.Println("密钥算法: ", endCert.PublicKeyAlgorithm)
+	fmt.Println("序列号: ", endCert.SerialNumber)
+	if len(endCert.DNSNames) > 0 {
+		fmt.Printf("DNS Names: %s\n", ArrayToString(endCert.DNSNames, ","))
+	}
+	fmt.Printf("=============== 证书信息 end cert ===============\n\n")
 }

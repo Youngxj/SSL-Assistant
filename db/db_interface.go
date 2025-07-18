@@ -1,12 +1,12 @@
-package main
+package db
 
 import (
 	"fmt"
 	"github.com/fatih/color"
 )
 
-// DBInterface 数据库接口定义
-type DBInterface interface {
+// dbInterface 数据库接口定义
+type dbInterface interface {
 	SaveConfig(key, value string) error
 	GetConfig(key string) (string, error)
 	GetConfigs(keys []string) (map[string]string, error)
@@ -135,11 +135,11 @@ func (db *BadgerImpl) Close() {
 	closeBadgerDB()
 }
 
-// 全局数据库接口
-var dbInterface DBInterface
+// Interface 全局数据库接口
+var Interface dbInterface
 
-// 初始化数据库
-func initDatabase() error {
+// InitDatabase 初始化数据库
+func InitDatabase() error {
 	// 尝试初始化SQLite数据库
 	err := initDB()
 	if err != nil {
@@ -153,11 +153,11 @@ func initDatabase() error {
 		}
 
 		// 使用BadgerDB实现
-		dbInterface = &BadgerImpl{}
+		Interface = &BadgerImpl{}
 		color.Green("成功切换到BadgerDB\n")
 	} else {
 		// 使用SQLite实现
-		dbInterface = &SQLiteDB{}
+		Interface = &SQLiteDB{}
 	}
 
 	return nil

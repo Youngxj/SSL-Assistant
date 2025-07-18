@@ -12,6 +12,7 @@
 tmp/
 temp/
 cert/
+*.ini
 
 # Go工作区文件
 go.work
