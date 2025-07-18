@@ -56,26 +56,8 @@ func initConfig() {
 
 	reader := bufio.NewReader(os.Stdin)
 
-	for {
-		fmt.Print("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ")
-		thirdC, _ := reader.ReadString('\n')
-		thirdC = strings.TrimSpace(thirdC)
-		var thirdCs []string
-		if thirdC != "" {
-			thirdCs = strings.Split(thirdC, " ")
-		}
-		for _, t := range thirdCs {
-			if t != "certd" && t != "west" {
-				color.Red("平台错误，目前支持certd、west，多个平台用空格分隔")
-				continue
-			} else if t == "certd" {
-				certd.SetConfig()
-			} else if t == "west" {
-				west.SetConfig()
-			}
-		}
-		break
-	}
+	// 设置平台密钥
+	modifyKey()
 
 	// 输入重载命令
 	fmt.Printf("请输入重载命令(如: %s): ", defaultReloadCmd)
@@ -390,7 +372,7 @@ func showCertificates() error {
 
 	for {
 		getCertificates()
-		fmt.Println("请输入操作：1=添加、2=删除、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、9=查看配置信息、0=退出")
+		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、9=查看配置信息、0=退出")
 		fmt.Print(">>> ")
 		if scanner.Scan() {
 			input := scanner.Text()
@@ -409,6 +391,9 @@ func showCertificates() error {
 				if err != nil {
 					return err
 				}
+				continue
+			case "3":
+				modifyKey()
 				continue
 			case "4": // 修改重载命令
 				err := modifyRestartCmd()
@@ -702,6 +687,32 @@ func getConfigInfo() error {
 		color.Cyan("%s: %s\n", key, value)
 	}
 	return err
+}
+
+// 修改密钥
+func modifyKey() {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Print("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ")
+		thirdC, _ := reader.ReadString('\n')
+		thirdC = strings.TrimSpace(thirdC)
+		var thirdCs []string
+		if thirdC != "" {
+			thirdCs = strings.Split(thirdC, " ")
+		}
+		for _, t := range thirdCs {
+			if t != "certd" && t != "west" {
+				color.Red("平台错误，目前支持certd、west，多个平台用空格分隔")
+				continue
+			} else if t == "certd" {
+				certd.SetConfig()
+			} else if t == "west" {
+				west.SetConfig()
+			}
+		}
+		break
+	}
 }
 
 // 检查是否初始化
