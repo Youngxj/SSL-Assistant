@@ -179,3 +179,9 @@ go build -o ssl_assistant
 ```
 
 将可执行文件添加到系统路径或直接 `./ssl_assistant init` 运行
+
+### 多端一键编译 👨‍💻
+
+```bash
+goreleaser release --snapshot
+```
