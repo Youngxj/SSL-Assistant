@@ -24,6 +24,7 @@ import (
 // 常见的 Nginx 配置文件路径
 var defaultNginxPaths = []string{
 	"/www/server/panel/vhost/nginx/*.conf", // 宝塔
+	"/opt/1panel/www/conf.d/*.conf",        // 1panel
 	"/etc/nginx/nginx.conf",
 	"/etc/nginx/conf.d/*.conf",
 	"/usr/local/nginx/conf/nginx.conf",

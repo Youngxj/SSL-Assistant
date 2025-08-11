@@ -34,9 +34,9 @@ Windows 和 Linux 平台 🖥️，可以自动寻找 Nginx 服务对应站点�
 - 支持自动寻找 Nginx 配置文件
     - [x] 原生Nginx环境 🐱‍🏍
     - [x] [宝塔面板](https://bt.cn) 🏰
+    - [x] [1Panel](https://1panel.cn) 📦
     - [ ] [小皮面板Windows](https://www.xp.cn) 🐘
     - [ ] [小皮面板](https://www.xp.cn) 🐘
-    - [ ] [1Panel](https://1panel.cn) 📦
 - [x] 支持自动获取证书信息 🔍
 - 支持更多证书申请管理工具
     - [x] [Certd](https://github.com/certd/certd) 流水线申请部署证书工具 🏭
@@ -154,6 +154,14 @@ crontab -e
 Windows: `C:\Users\<username>\.ssl_assistant`
 
 Linux: `/home/<username>/.ssl_assistant`
+
+## 重载命令
+
+重载命令用于SSL证书内容更新后更新服务
+
+- Nginx：`nginx -s reload`
+- 1Panel：`docker restart $(docker ps -aqf "name=openresty")`
+  > 1Panel因为采用了Docker容器化部署，所以需要重启容器才能生效，可能会出现服务中断问题
 
 ## 注意事项 ⚠️
 
