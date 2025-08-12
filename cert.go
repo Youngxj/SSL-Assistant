@@ -373,7 +373,7 @@ func showCertificates() error {
 
 	for {
 		getCertificates()
-		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、9=查看配置信息、0=退出")
+		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、8=查看任务、9=查看配置信息、0=退出")
 		fmt.Print(">>> ")
 		if scanner.Scan() {
 			input := scanner.Text()
@@ -418,6 +418,11 @@ func showCertificates() error {
 				err := findNginxPathCmd()
 				if err != nil {
 					return err
+				}
+				continue
+			case "8": // 查看任务
+				if !checkTask() {
+					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
 				}
 				continue
 			case "9": // 获取配置（测试）
@@ -631,15 +636,34 @@ func findNginxPathCmd() (err error) {
 	return err
 }
 
+// 检查任务
+func checkTask() bool {
+	c := cron.New()
+	fmt.Println("len(c.Entries())", len(c.Entries()))
+	if len(c.Entries()) > 0 {
+		// 打印所有已添加的任务
+		for _, e := range c.Entries() {
+			fmt.Printf("任务ID: %d, 下次执行时间: %v\n", e.ID, e.Next)
+		}
+		return true
+	} else {
+		return false
+	}
+}
+
 // 任务计划
 func cronTask() {
-	defaultCronTime := "0 0 4 * *"
-	defaultLogFile := "./cron.log"
+	if checkTask() {
+		color.Red("证书更新任务已存在，无需重复添加")
+		return
+	}
 	// 创建一个默认的cron对象
 	c := cron.New()
+	defaultCronTime := "0 0 4 * *"
+	defaultLogFile := "./cron.log"
 
 	// 添加任务
-	_, err := c.AddFunc(defaultCronTime, func() {
+	id, err := c.AddFunc(defaultCronTime, func() {
 		logFile, err := os.OpenFile(defaultLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			fmt.Println("open log file failed, err:", err)
@@ -667,7 +691,8 @@ func cronTask() {
 		color.Red("添加任务调度失败: %s", err)
 		return
 	}
-	color.Green("任务挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行")
+	color.Green("任务: %d 挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行\n", id)
+	color.Green("当前进程 PID: %d", os.Getpid())
 	//开始执行任务
 	c.Start()
 
