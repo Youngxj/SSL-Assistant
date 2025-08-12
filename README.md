@@ -193,3 +193,13 @@ go build -o ssl_assistant
 ```bash
 goreleaser release --snapshot
 ```
+
+### 切换为CGO模式
+
+CGO主要用于Sqlite3数据库
+
+```bash
+go env -w CGO_ENABLED=1
+```
+
+如果不使用Sqlite3数据库，则会自动使用BadgerDB数据库
