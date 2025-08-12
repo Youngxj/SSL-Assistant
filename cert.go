@@ -633,8 +633,7 @@ func findNginxPathCmd() (err error) {
 
 // 任务计划
 func cronTask() {
-	color.Green("任务挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行")
-	defaultCronTime := "0 0 4 * * ?"
+	defaultCronTime := "0 0 4 * *"
 	defaultLogFile := "./cron.log"
 	// 创建一个默认的cron对象
 	c := cron.New()
@@ -668,6 +667,7 @@ func cronTask() {
 		color.Red("添加任务调度失败: %s", err)
 		return
 	}
+	color.Green("任务挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行")
 	//开始执行任务
 	c.Start()
 
