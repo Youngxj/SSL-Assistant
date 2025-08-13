@@ -11,6 +11,12 @@ var (
 	config     *ini.File
 )
 
+// Entry 定义配置项结构体，用于保存键值对并保留顺序
+type Entry struct {
+	Key   string // 配置键（格式："section.key" 或 "key"）
+	Value string // 配置值
+}
+
 // InitConfig 初始化配置文件，若文件不存在则创建
 func InitConfig() error {
 	// 检查文件是否存在
@@ -37,19 +43,21 @@ func InitConfig() error {
 }
 
 func GetConfig(rootName string, keyName string) (string, error) {
-	if config == nil {
-		return "", fmt.Errorf("配置文件未初始化，请先调用 InitConfig")
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return "", fmt.Errorf("加载配置文件失败: %w", err)
 	}
-	section := config.Section(rootName).Key(keyName).String()
+	section := cfg.Section(rootName).Key(keyName).String()
 	return section, nil
 }
 
 func SetConfig(rootName string, keyName string, value string) error {
-	if config == nil {
-		return fmt.Errorf("配置文件未初始化，请先调用 InitConfig")
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("加载配置文件失败: %w", err)
 	}
-	config.Section(rootName).Key(keyName).SetValue(value)
-	err := config.SaveTo(configPath)
+	cfg.Section(rootName).Key(keyName).SetValue(value)
+	err = cfg.SaveTo(configPath)
 	if err != nil {
 		panic(err)
 	}
@@ -57,35 +65,42 @@ func SetConfig(rootName string, keyName string, value string) error {
 }
 
 // GetConfigs 批量获取指定根节点下的配置项
-func GetConfigs() (map[string]string, error) {
-	if config == nil {
-		return nil, fmt.Errorf("配置文件未初始化，请先调用 InitConfig")
+func GetConfigs() ([]Entry, error) {
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("加载配置文件失败: %w", err)
 	}
-
 	// 获取所有 Section（包括默认 Section）
-	sections := config.Sections()
-	configs := make(map[string]string)
+	sections := cfg.Sections()
+	var configs []Entry // 使用切片替代 map 以保留顺序
+
 	for _, section := range sections {
 		keyField := ""
-		// 获取当前 Section 下的所有 Key
+		// 获取当前 Section 下的所有 Key（按 INI 文件中出现顺序）
 		keys := section.Keys()
 		for _, key := range keys {
+			// 构建键名（DEFAULT  section 直接用 key 名，其他 section 格式为 "section.key"）
 			if section.Name() == "DEFAULT" {
 				keyField = key.Name()
 			} else {
 				keyField = fmt.Sprintf("%s.%s", section.Name(), key.Name())
 			}
-			configs[keyField] = key.Value()
+			// 按顺序添加到切片
+			configs = append(configs, Entry{
+				Key:   keyField,
+				Value: key.Value(),
+			})
 		}
 	}
 	return configs, nil
 }
 
 func GetThirdCofig(third string, keyName string) (string, error) {
-	if config == nil {
-		return "", fmt.Errorf("配置文件未初始化，请先调用 InitConfig")
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return "", fmt.Errorf("加载配置文件失败: %w", err)
 	}
 	rootName := "third." + third
-	section := config.Section(rootName).Key(keyName).String()
+	section := cfg.Section(rootName).Key(keyName).String()
 	return section, nil
 }

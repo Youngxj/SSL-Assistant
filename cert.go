@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"ssl_assistant/config"
 	"ssl_assistant/db"
 	"ssl_assistant/third/certd"
@@ -188,7 +189,7 @@ func parseNginxConfig(path string) {
 				cert.KeyPath = sslKey
 
 				// 保存证书信息
-				err = db.Interface.AddCertificate(cert)
+				err = db.AddCertificateToDBWrapper(cert)
 				if err != nil {
 					fmt.Printf("保存域名 %s 的证书信息失败: %v\n", domain, err)
 					continue
@@ -286,7 +287,7 @@ func addCertificate() error {
 	cert.KeyPath = keyPath
 
 	// 保存证书信息
-	err = db.Interface.AddCertificate(cert)
+	err = db.AddCertificateToDBWrapper(cert)
 	if err != nil {
 		return fmt.Errorf("保存证书信息失败: %s", err)
 	}
@@ -317,7 +318,7 @@ func deleteCertificate() error {
 	}
 
 	// 删除证书
-	err = db.Interface.DeleteCertificate(id)
+	err = db.DeleteCertificateFromDBWrapper(id)
 	if err != nil {
 		if err.Error() == "Key not found" {
 			return fmt.Errorf("证书%s不存在", idStr)
@@ -332,7 +333,7 @@ func deleteCertificate() error {
 // 获取证书并渲染表格
 func getCertificates() {
 	// 获取所有证书
-	certs, err := db.Interface.GetAllCertificates()
+	certs, err := db.GetAllCertificatesWrapper()
 	if err != nil {
 		fmt.Println("获取证书信息失败:", err)
 		return
@@ -421,8 +422,11 @@ func showCertificates() error {
 				}
 				continue
 			case "8": // 查看任务
-				if !checkTask() {
+				cPid := checkTask()
+				if cPid == "" {
 					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
+				} else {
+					color.Green("当前任务PID: %s", cPid)
 				}
 				continue
 			case "9": // 获取配置（测试）
@@ -488,7 +492,7 @@ func modifyExpirationDay() error {
 func updateCertificates() error {
 	initGuide(false)
 	// 获取所有证书
-	certificates, err := db.Interface.GetAllCertificates()
+	certificates, err := db.GetAllCertificatesWrapper()
 	if err != nil {
 		return fmt.Errorf("获取证书信息失败: %s", err)
 	}
@@ -526,7 +530,7 @@ func updateCertificates() error {
 		newCert.ID = cert.ID
 
 		// 更新证书信息
-		err = db.Interface.UpdateCertificate(newCert)
+		err = db.UpdateCertificateInDBWrapper(newCert)
 		if err != nil {
 			fmt.Printf("更新域名 %s 的证书信息失败: %v\n", cert.Domain, err)
 			continue
@@ -637,25 +641,30 @@ func findNginxPathCmd() (err error) {
 }
 
 // 检查任务
-func checkTask() bool {
-	c := cron.New()
-	fmt.Println("len(c.Entries())", len(c.Entries()))
-	if len(c.Entries()) > 0 {
-		// 打印所有已添加的任务
-		for _, e := range c.Entries() {
-			fmt.Printf("任务ID: %d, 下次执行时间: %v\n", e.ID, e.Next)
-		}
-		return true
-	} else {
-		return false
+func checkTask() string {
+	cronPid, err := config.GetConfig("", "cron_pid")
+	if cronPid == "" || err != nil {
+		return ""
 	}
+	if runtime.GOOS == "linux" {
+		pid, _ := strconv.Atoi(cronPid)
+		if !utils.CheckPid(pid) {
+			color.Red("证书更新任务进程不存在，可能已被手动kill，需要重新添加任务")
+			return ""
+		}
+	}
+	return cronPid
 }
 
 // 任务计划
-func cronTask() {
-	if checkTask() {
-		color.Red("证书更新任务已存在，无需重复添加")
-		return
+func cronTask(force bool) {
+	if !force {
+		cPid := checkTask()
+		if cPid != "" {
+			color.Red("证书更新任务已存在，无需重复添加\n")
+			color.Green("当前任务PID: %s", cPid)
+			return
+		}
 	}
 	// 创建一个默认的cron对象
 	c := cron.New()
@@ -663,7 +672,7 @@ func cronTask() {
 	defaultLogFile := "./cron.log"
 
 	// 添加任务
-	id, err := c.AddFunc(defaultCronTime, func() {
+	_, err := c.AddFunc(defaultCronTime, func() {
 		logFile, err := os.OpenFile(defaultLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			fmt.Println("open log file failed, err:", err)
@@ -678,6 +687,13 @@ func cronTask() {
 		log.SetFlags(log.Llongfile | log.Lmicroseconds | log.Ldate)
 		log.Println("任务开始执行")
 		log.SetPrefix("Cron: ")
+		cronPid, _ := config.GetConfig("", "cron_pid")
+		pid, _ := strconv.Atoi(cronPid)
+		log.Println("cronPid", cronPid, "pid", pid, "os.Getpid()", os.Getpid())
+		if cronPid != "" && pid != os.Getpid() {
+			log.Printf("任务pid: %d 与当前进程pid: %d 不一致，跳过任务\n", pid, os.Getpid())
+			return
+		}
 
 		err = updateCertificates()
 		if err != nil {
@@ -691,8 +707,13 @@ func cronTask() {
 		color.Red("添加任务调度失败: %s", err)
 		return
 	}
-	color.Green("任务: %d 挂载成功，现在可以退出程序了，任务会在每天凌晨4点自动执行\n", id)
+	color.Green("任务挂载成功，现在可以退出程序了，证书检查会在每天凌晨4点自动执行\n")
 	color.Green("当前进程 PID: %d", os.Getpid())
+	err = config.SetConfig("", "cron_pid", strconv.Itoa(os.Getpid()))
+	if err != nil {
+		color.Red("记录任务调度配置失败: %s", err)
+		return
+	}
 	//开始执行任务
 	c.Start()
 
@@ -706,11 +727,11 @@ func getConfigInfo() error {
 	if err != nil {
 		return fmt.Errorf("获取配置失败: %s", err)
 	}
-	for key, value := range configs {
-		if strings.Contains(key, "key_secret") || strings.Contains(key, "api_key") {
-			value = "********"
+	for _, entry := range configs {
+		if strings.Contains(entry.Key, "key_secret") || strings.Contains(entry.Key, "api_key") {
+			entry.Value = "********"
 		}
-		color.Cyan("%s: %s\n", key, value)
+		color.Cyan("%s: %s\n", entry.Key, entry.Value)
 	}
 	return err
 }
@@ -756,7 +777,7 @@ func checkInit() bool {
 
 // 检查证书是否已经存在（通过域名）
 func checkHasDomain(domain string) bool {
-	certInfo, _ := db.Interface.GetDomainCertificate(domain)
+	certInfo, _ := db.GetCertificateWrapper(domain)
 	return certInfo.Domain != ""
 }
 

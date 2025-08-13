@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"github.com/fatih/color"
+	"github.com/spf13/cobra"
 	"os"
 	"ssl_assistant/config"
-	"ssl_assistant/db"
-
-	"github.com/spf13/cobra"
 )
 
 var Version string
@@ -99,11 +97,13 @@ var findCmd = &cobra.Command{
 
 var cronCmd = &cobra.Command{
 	Use:   "cron",
-	Short: "证书更新任务",
+	Short: "证书更新任务\n\t-f 强制添加任务，覆盖已存在的任务。",
 	Long:  `证书更新自动化任务，每日凌晨4点自动检测证书更新，并执行证书更新操作。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		initGuide(true)
-		cronTask()
+		// 获取强制标志
+		force, _ := cmd.Flags().GetBool("force")
+		cronTask(force) // 传递强制参数给 cronTask 函数
 	},
 }
 
@@ -126,6 +126,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(findCmd)
 	rootCmd.AddCommand(cronCmd)
+	cronCmd.Flags().BoolP("force", "f", false, "强制添加任务，覆盖已存在的任务")
 }
 
 func main() {
@@ -134,17 +135,6 @@ func main() {
 	if err != nil {
 		fmt.Printf("初始化配置文件失败: %v\n", err)
 		return
-	}
-	if len(os.Args) > 1 && os.Args[1] != "version" {
-		// 初始化数据库（会自动选择SQLite或BadgerDB）
-		err := db.InitDatabase()
-		if err != nil {
-			fmt.Println("初始化数据库失败:", err)
-			os.Exit(1)
-		}
-
-		// 确保程序退出时关闭数据库
-		defer db.Interface.Close()
 	}
 
 	// 执行命令

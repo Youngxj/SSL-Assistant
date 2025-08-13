@@ -3,6 +3,13 @@ package db
 import (
 	"fmt"
 	"github.com/fatih/color"
+	"os"
+	"sync"
+)
+
+var (
+	databaseOnce    sync.Once
+	databaseInitErr error
 )
 
 // dbInterface 数据库接口定义
@@ -138,14 +145,19 @@ func (db *BadgerImpl) Close() {
 // Interface 全局数据库接口
 var Interface dbInterface
 
+// IsInit 是否初始化完成
+var IsInit bool
+
 // InitDatabase 初始化数据库
 func InitDatabase() error {
 	// 尝试初始化SQLite数据库
 	err := initDB()
 	if err != nil {
-		// 如果SQLite初始化失败，尝试使用BadgerDB
-		fmt.Println("SQLite数据库初始化失败:", err)
-		color.Cyan("尝试使用纯Go实现的BadgerDB作为替代...\n")
+		if !IsInit {
+			// 如果SQLite初始化失败，尝试使用BadgerDB
+			fmt.Println("SQLite数据库初始化失败:", err)
+			color.Cyan("尝试使用纯Go实现的BadgerDB作为替代...\n")
+		}
 
 		err = initBadgerDB()
 		if err != nil {
@@ -154,11 +166,25 @@ func InitDatabase() error {
 
 		// 使用BadgerDB实现
 		Interface = &BadgerImpl{}
-		color.Green("成功切换到BadgerDB\n")
+		if !IsInit {
+			color.Green("成功切换到BadgerDB\n")
+		}
 	} else {
 		// 使用SQLite实现
 		Interface = &SQLiteDB{}
 	}
+	IsInit = true
 
 	return nil
+}
+
+// OpenDatabase 调用数据库
+func OpenDatabase() error {
+	// 初始化数据库（会自动选择SQLite或BadgerDB）
+	err := InitDatabase()
+	if err != nil {
+		databaseInitErr = fmt.Errorf("初始化数据库失败: %v", err)
+		os.Exit(1)
+	}
+	return err
 }

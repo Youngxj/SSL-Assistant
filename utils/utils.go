@@ -8,8 +8,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -122,4 +124,20 @@ func ShowCertificateInfo(endCert *x509.Certificate) {
 		fmt.Printf("DNS Names: %s\n", ArrayToString(endCert.DNSNames, ","))
 	}
 	fmt.Printf("=============== 证书信息 end cert ===============\n\n")
+}
+
+// CheckPid 检查进程是否存在
+func CheckPid(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		log.Printf("Unable to find the process %d", pid)
+		return false
+	}
+
+	err = process.Signal(syscall.Signal(0))
+	if err != nil {
+		return false
+	} else {
+		return true
+	}
 }
