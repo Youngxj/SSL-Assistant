@@ -116,6 +116,8 @@ SSL-Assistant cron &
 
 运行此命令后，无需再次执行 `SSL-Assistant update` 命令，程序会自动检测证书更新并执行证书更新操作。
 
+> 任务运行期间，程序会记录运行日志，日志文件位于程序运行目录下的`cron.log`文件中
+
 ### 帮助文档 📚
 
 ```bash
@@ -147,15 +149,21 @@ crontab -e
 30 1 * * * /usr/local/bin/SSL-Assistant update
 ```
 
-## 配置文件 📄
+## 数据库文件 📄
 
-配置文件存储在用户主目录的 `.ssl_assistant` 文件夹中：
+证书数据库文件存储在用户主目录的 `.ssl_assistant` 文件夹中：
 
 Windows: `C:\Users\<username>\.ssl_assistant`
 
 Linux: `/home/<username>/.ssl_assistant`
 
-## 重载命令
+## 配置文件 📋
+
+配置文件放在程序运行目录下`config/conf.ini`
+
+可手动修改或使用命令`SSL-Assistant show`或`SSL-Assistant init`修改相关配置
+
+## 重载命令 🔄
 
 重载命令用于SSL证书内容更新后更新服务
 
