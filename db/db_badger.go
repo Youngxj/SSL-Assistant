@@ -32,7 +32,8 @@ func initBadgerDB() error {
 
 	// 打开Badger数据库
 	opts := badger.DefaultOptions(dataDir)
-	opts.Logger = nil // 禁用日志
+	opts.Logger = nil                // 禁用日志
+	opts.ValueLogFileSize = 64 << 20 // 值日志文件默认1GB，证书数据量小，缩小到64MB避免浪费磁盘空间
 	db, err := badger.Open(opts)
 	if err != nil {
 		return fmt.Errorf("打开Badger数据库失败: %v", err)

@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"os"
 	"ssl_assistant/config"
+	"ssl_assistant/utils"
 )
 
 var Version string
@@ -130,6 +131,9 @@ func init() {
 }
 
 func main() {
+	// 初始化跨平台控制台输出（Windows 下切换 UTF-8 代码页，避免中文/emoji 乱码）
+	utils.InitConsole()
+
 	// 初始化配置文件
 	err := config.InitConfig()
 	if err != nil {

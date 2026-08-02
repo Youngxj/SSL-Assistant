@@ -2,7 +2,6 @@ package west
 
 import (
 	"archive/zip"
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"github.com/fatih/color"
@@ -35,24 +34,17 @@ var (
 // SetConfig West配置
 func SetConfig() {
 	color.Cyan("正在配置West相关参数")
-	var reader *bufio.Reader
 	var rootName string = "third.west"
 	// 输入userName
-	fmt.Print("请输入 username（西部数码用户名）: ")
-	reader = bufio.NewReader(os.Stdin)
-	username, _ := reader.ReadString('\n')
-	username = strings.TrimSpace(username)
+	username := utils.ReadInput("请输入 username（西部数码用户名）: ", "")
 	err := config.SetConfig(rootName, "username", username)
 	if err != nil {
 		fmt.Println("保存 username 失败:", err)
 		return
 	}
 
-	// 输入api_key
-	fmt.Print("请输入 apiKey（SSL证书API密钥）: ")
-	reader = bufio.NewReader(os.Stdin)
-	apiKey, _ := reader.ReadString('\n')
-	apiKey = strings.TrimSpace(apiKey)
+	// 输入api_key（不回显）
+	apiKey := utils.ReadPassword("请输入 apiKey（SSL证书API密钥）: ")
 	err = config.SetConfig(rootName, "api_key", apiKey)
 	if err != nil {
 		fmt.Println("保存 api_key 失败:", err)

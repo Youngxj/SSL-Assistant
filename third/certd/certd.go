@@ -1,7 +1,6 @@
 package certd
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -9,7 +8,6 @@ import (
 	"github.com/fatih/color"
 	"io"
 	"net/http"
-	"os"
 	"ssl_assistant/config"
 	"ssl_assistant/utils"
 	"strconv"
@@ -187,15 +185,11 @@ func loadAutoApplyConfig() (enable bool, templateID int, renewDays int) {
 // SetConfig Certd配置
 func SetConfig() {
 	color.Cyan("正在配置Certd相关参数")
-	var reader *bufio.Reader
 	var rootName string = "third.certd"
 	var ApiUrl string
 	for {
 		// 输入ApiUrl
-		fmt.Print("请输入 ApiUrl（例如 http://your-certd-server.com）: ")
-		reader = bufio.NewReader(os.Stdin)
-		ApiUrl, _ = reader.ReadString('\n')
-		ApiUrl = strings.TrimSpace(ApiUrl)
+		ApiUrl = utils.ReadInput("请输入 ApiUrl（例如 http://your-certd-server.com）: ", "")
 		//判断url是否存在http或者https
 		if !strings.HasPrefix(ApiUrl, "http://") && !strings.HasPrefix(ApiUrl, "https://") {
 			fmt.Println("ApiUrl 错误，需包含 http:// or https:// 请重新输入")
@@ -212,21 +206,15 @@ func SetConfig() {
 	}
 
 	// 输入KeyId
-	fmt.Print("请输入 KeyId: ")
-	reader = bufio.NewReader(os.Stdin)
-	KeyId, _ := reader.ReadString('\n')
-	KeyId = strings.TrimSpace(KeyId)
+	KeyId := utils.ReadInput("请输入 KeyId: ", "")
 	err = config.SetConfig(rootName, "key_id", KeyId)
 	if err != nil {
 		fmt.Println("保存 key_id 失败:", err)
 		return
 	}
 
-	// 输入KeySecret
-	fmt.Print("请输入 KeySecret: ")
-	reader = bufio.NewReader(os.Stdin)
-	KeySecret, _ := reader.ReadString('\n')
-	KeySecret = strings.TrimSpace(KeySecret)
+	// 输入KeySecret（不回显）
+	KeySecret := utils.ReadPassword("请输入 KeySecret: ")
 	err = config.SetConfig(rootName, "key_secret", KeySecret)
 	if err != nil {
 		fmt.Println("保存 key_secret 失败:", err)
@@ -234,11 +222,8 @@ func SetConfig() {
 	}
 
 	// 自动申请配置（证书不存在时由certd自动创建流水线申请）
-	fmt.Print("证书不存在时是否自动申请（y/n，默认n，需certd端已配置域名校验）: ")
-	autoApply, _ := reader.ReadString('\n')
-	autoApply = strings.TrimSpace(autoApply)
 	applyVal := "0"
-	if autoApply == "y" || autoApply == "Y" {
+	if utils.Confirm("证书不存在时是否自动申请（需certd端已配置域名校验）") {
 		applyVal = "1"
 	}
 	err = config.SetConfig(rootName, "auto_apply", applyVal)
@@ -247,21 +232,14 @@ func SetConfig() {
 		return
 	}
 
-	fmt.Print("自动申请参数模版ID（可选，留空使用默认）: ")
-	tplID, _ := reader.ReadString('\n')
-	tplID = strings.TrimSpace(tplID)
+	tplID := utils.ReadInput("自动申请参数模版ID（可选，留空使用默认）: ", "")
 	err = config.SetConfig(rootName, "auto_apply_template_id", tplID)
 	if err != nil {
 		fmt.Println("保存 auto_apply_template_id 失败:", err)
 		return
 	}
 
-	fmt.Print("自动申请提前更新天数（默认10，建议与本地提前更新天数一致）: ")
-	renewDays, _ := reader.ReadString('\n')
-	renewDays = strings.TrimSpace(renewDays)
-	if renewDays == "" {
-		renewDays = "10"
-	}
+	renewDays := utils.ReadInput("自动申请提前更新天数（默认10，建议与本地提前更新天数一致）: ", "10")
 	err = config.SetConfig(rootName, "auto_apply_renew_days", renewDays)
 	if err != nil {
 		fmt.Println("保存 auto_apply_renew_days 失败:", err)
