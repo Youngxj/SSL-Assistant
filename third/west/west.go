@@ -67,7 +67,7 @@ func GetCert(domain string) (error, []byte, []byte, []byte) {
 	if err != nil {
 		return err, nil, nil, nil
 	}
-	urlAddress := fmt.Sprintf("%s/info/get-cert?type=PEM_Nginx&domain=%s&%s", apiUrl, domain, authParam)
+	urlAddress := fmt.Sprintf("%s/info/get-cert?%s&%s", apiUrl, getCertQuery(domain), authParam)
 	resp, err := getRequest(urlAddress)
 	if err != nil {
 		return fmt.Errorf("请求失败: %s\n", err), nil, nil, nil
@@ -136,14 +136,22 @@ func getRequest(url string) (*http.Response, error) {
 	// 添加请求头
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
 
-	// 发送请求
-	client := &http.Client{}
+	// 发送请求（设置超时，避免网络故障时永久挂起）
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 
 	return resp, err
+}
+
+// getCertQuery 构造证书查询参数（domain 统一 URL 编码，避免特殊字符破坏请求）
+func getCertQuery(domain string) string {
+	query := url.Values{}
+	query.Set("type", "PEM_Nginx")
+	query.Set("domain", domain)
+	return query.Encode()
 }
 
 // 获取鉴权参数
