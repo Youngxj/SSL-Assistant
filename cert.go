@@ -135,9 +135,16 @@ func findNginxConfigs(paths []string) []nginxSite {
 				found = append(found, parseNginxConfig(match)...)
 			}
 		} else {
-			// 否则直接检查文件是否存在
-			if _, err := os.Stat(path); err == nil {
-				found = append(found, parseNginxConfig(path)...)
+			// 否则直接检查路径是否存在；目录自动补默认通配符 *.conf
+			if info, err := os.Stat(path); err == nil {
+				if info.IsDir() {
+					matches, _ := filepath.Glob(filepath.Join(path, "*.conf"))
+					for _, match := range matches {
+						found = append(found, parseNginxConfig(match)...)
+					}
+				} else {
+					found = append(found, parseNginxConfig(path)...)
+				}
 			}
 		}
 		// 同一域名可能出现在多个配置文件，去重
@@ -640,6 +647,30 @@ func getCertificates() {
 	table.Render()
 }
 
+// showPlatformStatus 输出当前证书平台配置状态（√ 已配置 / × 未配置完整）
+func showPlatformStatus() {
+	// 注意：color.Green/Red 顶层函数默认追加换行，这里用 GreenString/RedString 拼接到单行
+	platformMark := func(ok bool, name string) string {
+		if ok {
+			return color.GreenString("√ " + name)
+		}
+		return color.RedString("× " + name)
+	}
+
+	// certd：api_url + key_id + key_secret 均配置才视为就绪
+	apiURL, _ := config.GetConfig("third.certd", "api_url")
+	keyID, _ := config.GetConfig("third.certd", "key_id")
+	keySecret, _ := config.GetConfig("third.certd", "key_secret")
+	certdOK := apiURL != "" && keyID != "" && keySecret != ""
+
+	// west：username + api_key 均配置才视为就绪
+	username, _ := config.GetConfig("third.west", "username")
+	apiKey, _ := config.GetConfig("third.west", "api_key")
+	westOK := username != "" && apiKey != ""
+
+	fmt.Printf("平台配置: %s  %s\n", platformMark(certdOK, "certd"), platformMark(westOK, "west"))
+}
+
 // 查看证书
 func showCertificates() error {
 	if err := initGuide(false); err != nil {
@@ -648,6 +679,7 @@ func showCertificates() error {
 
 	for {
 		getCertificates()
+		showPlatformStatus()
 		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、8=查看任务、9=查看配置信息、0=退出")
 		input := utils.ReadInput(">>> ", "")
 		switch input {
@@ -903,10 +935,12 @@ func findNginxPathCmd() (err error) {
 
 	// 输入自定义Nginx配置文件路径，每行一个，避免 Windows 路径含空格被拆分；示例按平台显示
 	nginxExample := "/etc/nginx/nginx.conf"
+	nginxDirExample := "/etc/nginx/conf.d"
 	if runtime.GOOS == "windows" {
 		nginxExample = `C:\nginx\conf\nginx.conf`
+		nginxDirExample = `C:\nginx\conf\vhosts`
 	}
-	fmt.Printf("请输入 Nginx 配置文件路径，每行一个，支持通配*.conf，输入完成后请直接回车(空行)结束（示例: %s）:\n", nginxExample)
+	fmt.Printf("请输入 Nginx 配置文件路径，每行一个。支持三种写法：\n  1. 目录（自动匹配该目录下 *.conf，如 %s）\n  2. 单个文件（如 %s）\n  3. 通配符（如 %s\\*.conf）\n输入完成后请直接回车(空行)结束:\n", nginxDirExample, nginxExample, nginxDirExample)
 	var nginxPaths []string
 	for {
 		line := utils.ReadInput("", "")

@@ -50,14 +50,22 @@ func ReadInput(prompt, def string) string {
 	return input
 }
 
-// MultiSelectCheckbox 多选勾选列表（回车勾选交互）。
-// 循环展示 [ ]/[x] 列表；输入序号（空格分隔可一次切换多个）后回车切换勾选状态，
-// 直接回车确认选择，返回已勾选项的下标（与 items 顺序一致）。
-// items 为空时直接返回空切片。
+// MultiSelectCheckbox 多选勾选列表。
+// 终端环境下为方向键交互：↑/↓ 移动高亮，空格切换勾选，回车确认（ESC 取消）；
+// 非终端（管道/重定向）回退为序号输入：输入序号（空格分隔可一次切换多个）后回车，直接回车确认。
+// 返回已勾选项的下标（与 items 顺序一致）；items 为空时返回空切片。
 func MultiSelectCheckbox(items []string, prompt string) []int {
 	if len(items) == 0 {
 		return nil
 	}
+	if IsInteractive() {
+		return multiSelectKeyNav(items, prompt)
+	}
+	return multiSelectNumeric(items, prompt)
+}
+
+// multiSelectNumeric 序号输入模式（非终端回退）：输入序号切换勾选，空行确认。
+func multiSelectNumeric(items []string, prompt string) []int {
 	if prompt == "" {
 		prompt = "输入序号切换勾选（多个用空格分隔，直接回车确认）: "
 	}
@@ -89,6 +97,115 @@ func MultiSelectCheckbox(items []string, prompt string) []int {
 			color.Yellow("请输入 1-%d 之间的序号\n", len(items))
 		}
 	}
+	return collectSelected(selected)
+}
+
+// multiSelectKeyNav 方向键交互模式：↑/↓ 移动高亮，空格切换勾选，回车确认，ESC 取消。
+// 需要原始终端输入；MakeRaw 失败时回退序号输入。
+func multiSelectKeyNav(items []string, prompt string) []int {
+	if prompt == "" {
+		prompt = "↑/↓ 移动，空格勾选，回车确认，ESC 取消: "
+	}
+	selected := make([]bool, len(items))
+	cur := 0
+	fd := int(os.Stdin.Fd())
+
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		// 无法进入原始模式（如非终端）时回退序号输入
+		return multiSelectNumeric(items, prompt)
+	}
+	defer term.Restore(fd, oldState)
+
+	// 隐藏光标，退出时恢复
+	fmt.Print("\x1b[?25l")
+	defer fmt.Print("\x1b[?25h")
+
+	// render 重绘整个列表区域（列表 + 提示行）；first=true 时不移动光标（首次打印）
+	render := func(first bool) {
+		if !first {
+			// CSI n F：上移 n 行并回到行首（n = 列表行数，光标当前在提示行，回到列表第一行）
+			fmt.Printf("\x1b[%dF", len(items))
+		}
+		for i, item := range items {
+			mark := " "
+			if selected[i] {
+				mark = "x"
+			}
+			line := fmt.Sprintf("[%s] %d. %s", mark, i+1, item)
+			if i == cur {
+				fmt.Print("> " + color.New(color.ReverseVideo).Sprint(line))
+			} else {
+				fmt.Print("  " + line)
+			}
+			fmt.Print("\x1b[K\r\n") // 清行并显式回车换行（raw 模式下 \n 不会自动 \r）
+		}
+		fmt.Printf("\x1b[K%s", prompt)
+	}
+
+	// readKey 读取一个按键；方向键等 ESC 序列（\x1b[A）补齐读取
+	readKey := func() []byte {
+		one := make([]byte, 1)
+		if _, err := os.Stdin.Read(one); err != nil {
+			return nil
+		}
+		if one[0] != 0x1b {
+			return one
+		}
+		rest := make([]byte, 2)
+		n := 0
+		for n < 2 {
+			m, err := os.Stdin.Read(rest[n:])
+			if err != nil {
+				break
+			}
+			n += m
+		}
+		return append(one, rest[:n]...)
+	}
+
+	render(true)
+	for {
+		key := readKey()
+		if key == nil {
+			break
+		}
+		switch {
+		case key[0] == '\r' || key[0] == '\n':
+			// 回车确认
+			fmt.Print("\r\n")
+			return collectSelected(selected)
+		case key[0] == ' ':
+			// 空格切换当前项勾选
+			selected[cur] = !selected[cur]
+			render(false)
+		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
+			switch key[2] {
+			case 'A': // ↑
+				cur--
+				if cur < 0 {
+					cur = len(items) - 1
+				}
+				render(false)
+			case 'B': // ↓
+				cur++
+				if cur >= len(items) {
+					cur = 0
+				}
+				render(false)
+			}
+		case len(key) == 1 && key[0] == 0x1b:
+			// ESC 单独按下：取消选择
+			fmt.Print("\r\n")
+			return nil
+		}
+	}
+	fmt.Print("\r\n")
+	return collectSelected(selected)
+}
+
+// collectSelected 收集勾选下标
+func collectSelected(selected []bool) []int {
 	var result []int
 	for i, s := range selected {
 		if s {

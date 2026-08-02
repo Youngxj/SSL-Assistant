@@ -76,6 +76,8 @@ func GetCertificateInfo(domain string, certID int) (crt, key []byte, detail *Cer
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("获取api_url配置失败: %v", err)
 	}
+	// 兼容手工修改 conf.ini 时尾部残留 / 或 \ 的情况
+	ApiUrl = strings.TrimRight(ApiUrl, `/\`)
 	KeyId, err := config.GetConfig("third.certd", "key_id")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("获取key_id配置失败: %v", err)
@@ -195,8 +197,8 @@ func SetConfig() {
 			fmt.Println("ApiUrl 错误，需包含 http:// or https:// 请重新输入")
 			continue
 		}
-		//如果结尾是/则去掉
-		ApiUrl = strings.TrimSuffix(ApiUrl, "/")
+		//去掉结尾的 / 或 \（兼容 https://xxx/、https://xxx\、https://xxx// 等写法）
+		ApiUrl = strings.TrimRight(ApiUrl, `/\`)
 		break
 	}
 	err := config.SetConfig(rootName, "api_url", ApiUrl)
