@@ -10,7 +10,7 @@
 > 时，证书部署服务器密钥填写在平台中可能出现的安全问题，同时又有多个站点需要部署证书的场景，SSL Assistant 可以有效的帮助大家解决这个问题。
 
 SSL Assistant 是一个基于 Go 语言开发的跨平台证书部署管理助手 🤖，用于SSL远程证书拉取，并自动完成SSL证书更新及生效流程。该工具支持
-Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx 服务对应站点的配置文件，获取域名和证书信息，并将证书信息保存到数据库中。
+Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx / Apache 服务对应站点的配置文件，获取域名和证书信息，并将证书信息保存到数据库中。
 可通过计划任务定期更新证书，实现 SSL 证书的自动更新和部署 ⏰。
 
 <p align="center">
@@ -24,7 +24,7 @@ Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx 服务对应
 - 证书更新：主动拉取远程证书信息，以**证书文件实际过期时间**判断是否需要更新，自动部署并重载生效 🔄
 - 多渠道证书：支持多种证书申请管理工具，如 Certd、西部数码等 📡
 - 自动申请：证书不存在时可触发 Certd 自动创建流水线申请新证书（需在初始化时开启）🚀
-- 自动匹配路径：添加证书时自动从 Nginx/宝塔配置匹配证书存放路径，无需手动输入 📂
+- 自动匹配路径：添加证书时自动从 Nginx / Apache / 宝塔配置匹配证书存放路径，无需手动输入 📂
 - 站点勾选批量添加：检索到站点后支持**方向键勾选**（↑/↓ 移动、空格勾选、回车确认）或序号输入批量添加 ☑️
 - 检查更新：内置 `checkupdate` 检查新版本并输出下载地址（不自动下载）🔍
 - 命令行操作：提供简单易用的命令行界面；Windows 支持**双击进入交互菜单** 💻
@@ -41,11 +41,11 @@ Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx 服务对应
     - [x] 原生Nginx环境 🐱‍🏍
     - [x] [宝塔面板](https://bt.cn) 🏰（含新版证书目录 `/www/server/panel/vhost/cert/<域名>/` 自动识别）
     - [x] [1Panel](https://1panel.cn) 📦
-    - [x] [小皮面板Windows](https://www.xp.cn) 🐘（自动探测安装目录与 Nginx 版本）
+    - [x] [小皮面板Windows](https://www.xp.cn) 🐘（自动探测安装目录与 Nginx / Apache 版本）
     - [ ] [小皮面板](https://www.xp.cn) 🐘
 - [x] 支持自动寻找 Apache 配置文件（VirtualHost 块）🐘
 - [x] 支持自动获取证书信息 🔍
-- [x] 添加证书自动匹配 Nginx/宝塔配置中的证书路径 📂
+- [x] 添加证书自动匹配 Nginx / Apache / 宝塔配置中的证书路径 📂
 - [x] Certd 证书不存在时自动申请（autoApply）🚀
 - [x] 证书ID（certId）持久化，更新时优先按证书ID拉取 🔢
 - 支持更多证书申请管理工具
@@ -64,8 +64,8 @@ Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx 服务对应
 ## 安装与使用 📥
 
 1. 下载对应平台的运行文件 [Releases 下载页面](https://github.com/Youngxj/SSL-Assistant/releases) ⬇️
-2. 初始化程序：`SSL-Assistant init` 根据提示完成初始化配置，填写API地址、API密钥、重载命令等信息。初始化时会自动检索宝塔/1Panel/原生 Nginx 的配置文件并导入证书，无需手动输入路径 ⚙️
-3. 添加证书：`SSL-Assistant add` 输入域名，程序会自动根据域名获取证书信息，并自动匹配 Nginx/宝塔配置中的证书路径，保存到数据库，以便后面的更新操作 ➕
+2. 初始化程序：`SSL-Assistant init` 根据提示完成初始化配置，填写API地址、API密钥、重载命令等信息。初始化时会自动检索宝塔/1Panel/原生 Nginx 与 Apache 的配置文件并导入证书，无需手动输入路径 ⚙️
+3. 添加证书：`SSL-Assistant add` 输入域名，程序会自动根据域名获取证书信息，并自动匹配 Nginx / Apache / 宝塔配置中的证书路径，保存到数据库，以便后面的更新操作 ➕
 4. 定期更新：可使用Crontab设置定时任务定期执行`SSL-Assistant update` ，自动更新部署证书 🔁
 
 ### Windows 双击运行 🖱️
@@ -115,7 +115,7 @@ SSL-Assistant init
 SSL-Assistant add
 ```
 
-手动添加证书信息，程序会自动根据域名获取证书信息。若该域名在 Nginx/宝塔配置中存在，会**自动匹配证书与私钥路径**（可确认使用）；未匹配到才需要手动输入路径。
+手动添加证书信息，程序会自动根据域名获取证书信息。若该域名在 Nginx / Apache / 宝塔配置中存在，会**自动匹配证书与私钥路径**（可确认使用）；未匹配到才需要手动输入路径。
 
 ### 更新证书 🔄
 
@@ -143,15 +143,15 @@ SSL-Assistant del
 
 删除指定域名的证书信息，包括证书文件、证书配置等。
 
-### 快速添加域名（Nginx目录检索）🕵️‍♂️
+### 快速添加域名（Nginx / Apache 目录检索）🕵️‍♂️
 
 ```bash
 SSL-Assistant find
 ```
 
-快速添加域名，程序会自动寻找 Nginx 配置文件（支持自定义路径），**列出所有检索到的域名**进行勾选（终端下方向键 ↑/↓ + 空格勾选 + 回车确认，非终端回退序号输入），确认后自动将勾选的域名添加到服务中，以便后面的更新操作。
+快速添加域名，程序会自动寻找 Nginx / Apache 配置文件（支持自定义路径），**列出所有检索到的域名**进行勾选（终端下方向键 ↑/↓ + 空格勾选 + 回车确认，非终端回退序号输入），确认后自动将勾选的域名添加到服务中，以便后面的更新操作。
 
-自定义 Nginx 路径支持三种写法（每行一个，输入空行结束）：
+自定义路径支持三种写法（每行一个，输入空行结束；Nginx `server{}` 块与 Apache `<VirtualHost>` 块按语法自动识别）：
 
 1. **目录**：自动匹配该目录下所有 `*.conf`（如 `/etc/nginx/conf.d`、`C:\nginx\conf\vhosts`）
 2. **单个文件**（如 `/etc/nginx/nginx.conf`）
@@ -250,12 +250,13 @@ Linux: `/home/<username>/.ssl_assistant`
 重载命令用于SSL证书内容更新后更新服务，命令通过系统 Shell 执行（Linux `sh -c` / Windows `cmd /C`），支持引号、管道、`$(...)` 等语法，并有 60 秒超时保护
 
 - Nginx：`nginx -s reload`
+- Apache：`apachectl -k graceful`（Debian/Ubuntu 亦可 `systemctl reload apache2`，CentOS `systemctl reload httpd`）
 - 1Panel：`docker restart $(docker ps -aqf "name=openresty")`
   > 1Panel因为采用了Docker容器化部署，所以需要重启容器才能生效，可能会出现服务中断问题
 
 ## 注意事项 ⚠️
 
-1. 确保程序有足够的权限读取 Nginx 配置文件和写入证书文件 🔑
+1. 确保程序有足够的权限读取 Nginx / Apache 配置文件和写入证书文件 🔑
 2. 证书更新后会自动执行重载命令，请确保命令正确 ✔️
 3. 定期检查证书状态，确保证书有效 🔎
 
@@ -316,7 +317,7 @@ go build -o ssl_assistant   # 纯编译（不注入版本号，checkupdate 会�
 
 ### 运行测试 ✅
 
-项目内置单元测试（Nginx 配置解析、数据库双实现 CRUD、Certd 接口、GitHub 版本查询、配置缓存），SQLite 与 BadgerDB 两种模式均可运行：
+项目内置单元测试（Nginx / Apache 配置解析、小皮面板目录探测、数据库双实现 CRUD、Certd 接口、GitHub 版本查询、配置缓存），SQLite 与 BadgerDB 两种模式均可运行：
 
 ```bash
 go test ./...            # 默认 CGO 模式（SQLite）
