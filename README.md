@@ -39,7 +39,7 @@ Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx 服务对应
 - [x] 初始化自动检索 Nginx 配置，无需手动输入路径 ✅
 - 支持自动寻找 Nginx 配置文件
     - [x] 原生Nginx环境 🐱‍🏍
-    - [x] [宝塔面板](https://bt.cn) 🏰
+    - [x] [宝塔面板](https://bt.cn) 🏰（含新版证书目录 `/www/server/panel/vhost/cert/<域名>/` 自动识别）
     - [x] [1Panel](https://1panel.cn) 📦
     - [x] [小皮面板Windows](https://www.xp.cn) 🐘（自动探测安装目录与 Nginx 版本）
     - [ ] [小皮面板](https://www.xp.cn) 🐘
@@ -99,7 +99,7 @@ Windows 用户可以直接**双击 `SSL-Assistant.exe`** 启动，程序会打�
 SSL-Assistant init
 ```
 
-初始化程序，设置证书信息获取的凭证和证书更新后需要执行的命令。初始化完成后，程序会自动寻找宝塔/1Panel/原生 Nginx **与 Apache** 的配置文件（Nginx `server{}` 块、Apache `<VirtualHost>` 块自动识别），**列出所有检索到的域名**进行勾选。终端下使用**方向键 ↑/↓ 移动高亮、空格勾选、回车确认**（ESC 取消）；非终端环境（管道/脚本）自动回退为序号输入模式。确认后自动将勾选的域名添加到服务中。
+初始化程序，设置证书信息获取的凭证和证书更新后需要执行的命令。初始化完成后，程序会自动寻找宝塔/1Panel/原生 Nginx **与 Apache** 的配置文件（Nginx `server{}` 块、Apache `<VirtualHost>` 块自动识别），并扫描**新版宝塔证书目录**（`/www/server/panel/vhost/cert/<域名>/`，Nginx/Apache 共用，按域名目录自动识别），**列出所有检索到的域名**进行勾选。终端下使用**方向键 ↑/↓ 移动高亮、空格勾选、回车确认**（ESC 取消）；非终端环境（管道/脚本）自动回退为序号输入模式。确认后自动将勾选的域名添加到服务中。
 
 ```
   [ ] 1. example.com      ← ↑/↓ 移动高亮
@@ -107,7 +107,7 @@ SSL-Assistant init
   [ ] 3. test.com         ← 回车确认，ESC 取消
 ```
 
-> 自动检索到证书配置后不会再询问自定义路径；仅当默认路径（宝塔 `/www/server/panel/vhost/nginx/*.conf`、`/www/server/apache/vhost/*.conf`、1Panel `/opt/1panel/www/conf.d/*.conf`、`/etc/nginx`、`/etc/apache2` 等）与**小皮面板自动探测**（Windows 下枚举盘符 → `phpstudy_pro\Extensions\Nginx*/Apache*\conf\vhosts`）均未找到证书时，才提示可手动补充（直接回车跳过）。
+> 自动检索到证书配置后不会再询问自定义路径；仅当默认路径（宝塔 `/www/server/panel/vhost/nginx/*.conf`、`/www/server/apache/vhost/*.conf`、**新版证书目录 `/www/server/panel/vhost/cert`**、1Panel `/opt/1panel/www/conf.d/*.conf`、`/etc/nginx`、`/etc/apache2` 等）与**小皮面板自动探测**（Windows 下枚举盘符 → `phpstudy_pro\Extensions\Nginx*/Apache*\conf\vhosts`）均未找到证书时，才提示可手动补充（直接回车跳过）。
 
 ### 添加证书 📝
 
