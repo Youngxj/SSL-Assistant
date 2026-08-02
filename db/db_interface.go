@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fatih/color"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -105,6 +107,30 @@ func (db *BadgerImpl) Close() {
 
 // Interface 全局数据库接口
 var Interface dbInterface
+
+// DBMode 返回当前数据库模式（SQLite / BadgerDB），未初始化时返回空
+func DBMode() string {
+	if Interface == nil {
+		return ""
+	}
+	if _, ok := Interface.(*BadgerImpl); ok {
+		return "BadgerDB"
+	}
+	return "SQLite"
+}
+
+// DBPath 返回当前数据库数据路径（文件或目录）
+func DBPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dataDir := filepath.Join(homeDir, ".ssl_assistant")
+	if DBMode() == "BadgerDB" {
+		return filepath.Join(dataDir, "badger")
+	}
+	return filepath.Join(dataDir, "ssl_assistant.db")
+}
 
 // InitDatabase 初始化数据库（进程内单例，只初始化一次）
 func InitDatabase() error {

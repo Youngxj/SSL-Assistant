@@ -718,6 +718,10 @@ func showPlatformStatus() {
 	westOK := username != "" && apiKey != ""
 
 	fmt.Printf("平台配置: %s  %s\n", platformMark(certdOK, "certd"), platformMark(westOK, "west"))
+	// 数据库模式与路径（show 菜单场景数据库已初始化）
+	if mode := db.DBMode(); mode != "" {
+		color.Cyan("数据库: %s (%s)\n", mode, db.DBPath())
+	}
 }
 
 // 查看证书

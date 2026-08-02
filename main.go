@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"os"
 	"ssl_assistant/config"
+	"ssl_assistant/db"
 	"ssl_assistant/third/github"
 	"ssl_assistant/utils"
 )
@@ -100,9 +101,18 @@ var cronCmd = &cobra.Command{
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "显示版本信息",
-	Long:  `显示版本信息，包括程序名称、版本号、编译时间等。`,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("SSL Assistant %s\n项目地址: %s\n", Version, "https://github.com/Youngxj/SSL-Assistant")
+	Long:  `显示版本信息，包括程序名称、版本号、数据库模式与数据路径等。`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Printf("SSL Assistant %s\n", Version)
+		fmt.Printf("项目地址: %s\n", "https://github.com/Youngxj/SSL-Assistant")
+		// 初始化数据库以确定当前模式（无数据时自动创建目录）
+		if err := db.InitDatabase(); err != nil {
+			color.Yellow("数据库模式: 未知（初始化失败: %v）\n", err)
+		} else {
+			fmt.Printf("数据库模式: %s\n", db.DBMode())
+			fmt.Printf("数据库路径: %s\n", db.DBPath())
+		}
+		return nil
 	},
 }
 
