@@ -181,54 +181,58 @@ func runInteractiveMenu() {
 	for {
 		fmt.Println()
 		fmt.Println("========== SSL Assistant 操作菜单 ==========")
-		fmt.Println("  1. 初始化程序      (init)")
-		fmt.Println("  2. 添加证书        (add)")
-		fmt.Println("  3. 删除证书        (del)")
-		fmt.Println("  4. 查看证书        (show)")
-		fmt.Println("  5. 更新证书        (update)")
-		fmt.Println("  6. 快速添加域名    (find)")
-		fmt.Println("  7. 证书更新任务    (cron)")
-		fmt.Println("  8. 显示版本信息    (version)")
-		fmt.Println("  9. 检查更新        (checkupdate)")
-		fmt.Println("  0. 退出")
+		// 终端下支持方向键选择（↑/↓ + 回车），非终端回退序号输入
+		items := []string{
+			"初始化程序      (init)",
+			"添加证书        (add)",
+			"删除证书        (del)",
+			"查看证书        (show)",
+			"更新证书        (update)",
+			"快速添加域名    (find)",
+			"证书更新任务    (cron)",
+			"显示版本信息    (version)",
+			"检查更新        (checkupdate)",
+			"退出",
+		}
+		idx := utils.SelectMenu(items, "请选择（↑/↓ 移动，回车确认）: ")
 		fmt.Println("============================================")
 
-		choice := utils.ReadInput("请选择: ", "")
-		switch choice {
-		case "1":
+		// 方向键菜单返回索引（0 起）；ESC 取消返回 -1
+		switch idx {
+		case 0:
 			runMenuAction("初始化程序", func() error { initConfig(); return nil })
-		case "2":
+		case 1:
 			runMenuAction("添加证书", addCertificate)
-		case "3":
+		case 2:
 			runMenuAction("删除证书", deleteCertificate)
-		case "4":
+		case 3:
 			runMenuAction("查看证书", showCertificates)
-		case "5":
+		case 4:
 			runMenuAction("更新证书", updateCertificates)
-		case "6":
+		case 5:
 			runMenuAction("快速添加域名", func() error {
 				if err := initGuide(true); err != nil {
 					return err
 				}
 				return findNginxPathCmd()
 			})
-		case "7":
+		case 6:
 			// Windows 下 cron 常驻进程不适用（会阻塞窗口），引导使用任务计划程序
 			color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
 			utils.ReadInput("按回车返回菜单", "")
-		case "8":
+		case 7:
 			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
-		case "9":
+		case 8:
 			runMenuAction("检查更新", func() error {
 				// 菜单场景：内部已打印完整提示（含手动下载地址），不重复输出错误
 				checkUpdate()
 				return nil
 			})
-		case "0", "q", "exit":
+		case 9:
 			fmt.Println("再见！")
 			return
 		default:
-			color.Yellow("无效选择，请重新输入\n")
+			color.Yellow("已取消\n")
 		}
 	}
 }

@@ -50,6 +50,128 @@ func ReadInput(prompt, def string) string {
 	return input
 }
 
+// SelectMenu 终端下方向键单选菜单（↑/↓ 移动、回车确认、ESC 取消），非终端回退序号输入。
+// 返回选中项索引（0 起）；取消/EOF 返回 -1。
+func SelectMenu(items []string, prompt string) int {
+	if len(items) == 0 {
+		return -1
+	}
+	if IsInteractive() {
+		return selectMenuKeyNav(items, prompt)
+	}
+	return selectMenuNumeric(items, prompt)
+}
+
+// selectMenuNumeric 序号输入模式（非终端回退）：输入序号回车选择，直接回车默认第一项。
+func selectMenuNumeric(items []string, prompt string) int {
+	_ = prompt // 非终端场景使用序号提示（不展示方向键文案）
+	menuPrompt := "输入序号选择（直接回车默认第一项）: "
+	for {
+		input := ReadInput(menuPrompt, "1")
+		idx, err := strconv.Atoi(strings.TrimSpace(input))
+		if err == nil && idx >= 1 && idx <= len(items) {
+			return idx - 1
+		}
+		color.Red("无效序号，请输入 1-%d\n", len(items))
+	}
+}
+
+// selectMenuKeyNav 方向键单选菜单：↑/↓ 移动高亮，回车确认，ESC 取消。
+// 需要原始终端输入；MakeRaw 失败时回退序号输入。
+func selectMenuKeyNav(items []string, prompt string) int {
+	if prompt == "" {
+		prompt = "↑/↓ 移动，回车确认，ESC 取消: "
+	}
+	cur := 0
+	fd := int(os.Stdin.Fd())
+
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return selectMenuNumeric(items, prompt)
+	}
+	defer term.Restore(fd, oldState)
+
+	// 隐藏光标，退出时恢复
+	fmt.Print("\x1b[?25l")
+	defer fmt.Print("\x1b[?25h")
+
+	// render 重绘整个菜单区域（菜单项 + 提示行）
+	render := func(first bool) {
+		if !first {
+			// CSI n F：上移 n 行并回到行首
+			fmt.Printf("\x1b[%dF", len(items))
+		}
+		for i, item := range items {
+			line := fmt.Sprintf("%d. %s", i+1, item)
+			if i == cur {
+				fmt.Print("> " + color.New(color.ReverseVideo).Sprint(line))
+			} else {
+				fmt.Print("  " + line)
+			}
+			fmt.Print("\x1b[K\r\n") // 清行并显式回车换行（raw 模式下 \n 不会自动 \r）
+		}
+		fmt.Printf("\x1b[K%s", prompt)
+	}
+
+	// readKey 读取一个按键；方向键等 ESC 序列（\x1b[A）补齐读取
+	readKey := func() []byte {
+		one := make([]byte, 1)
+		if _, err := os.Stdin.Read(one); err != nil {
+			return nil
+		}
+		if one[0] != 0x1b {
+			return one
+		}
+		rest := make([]byte, 2)
+		n := 0
+		for n < 2 {
+			m, err := os.Stdin.Read(rest[n:])
+			if err != nil {
+				break
+			}
+			n += m
+		}
+		return append(one, rest[:n]...)
+	}
+
+	render(true)
+	for {
+		key := readKey()
+		if key == nil {
+			return -1
+		}
+		switch {
+		case key[0] == '\r' || key[0] == '\n':
+			// 回车确认当前项
+			fmt.Print("\r\n")
+			return cur
+		case key[0] == 0x03:
+			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
+			fmt.Print("\x1b[?25h\r\n")
+			term.Restore(fd, oldState)
+			os.Exit(130)
+		case key[0] == 0x1b && len(key) >= 3 && key[1] == '[':
+			// ESC 序列：方向键
+			switch key[2] {
+			case 'A': // ↑
+				if cur > 0 {
+					cur--
+					render(false)
+				}
+			case 'B': // ↓
+				if cur < len(items)-1 {
+					cur++
+					render(false)
+				}
+			}
+		case key[0] == 0x1b:
+			// 单独的 ESC：取消
+			fmt.Print("\r\n")
+			return -1
+		}
+	}
+}
+
 // MultiSelectCheckbox 多选勾选列表。
 // 终端环境下为方向键交互：↑/↓ 移动高亮，空格切换勾选，回车确认（ESC 取消）；
 // 非终端（管道/重定向）回退为序号输入：输入序号（空格分隔可一次切换多个）后回车，直接回车确认。

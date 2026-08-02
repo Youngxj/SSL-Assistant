@@ -1068,80 +1068,89 @@ func showCertificates() error {
 	for {
 		getCertificates()
 		showPlatformStatus()
-		// 菜单项按平台动态生成：Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
-		menu := "1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）"
+		// 菜单项按平台动态生成（终端方向键选择，非终端序号回退）：
+		// Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
+		items := []string{
+			"添加证书",
+			"删除证书",
+			"修改密钥",
+			"修改重载命令",
+			"更新证书",
+			"修改提前更新天数",
+			"快速添加域名（Nginx目录检索）",
+		}
+		viewTaskIdx := -1
 		if runtime.GOOS != "windows" {
-			menu += "、8=查看任务"
+			viewTaskIdx = len(items)
+			items = append(items, "查看任务")
 		}
-		menu += "、9=查看配置信息、0=退出"
-		fmt.Println("请输入操作：" + menu)
-		if runtime.GOOS == "windows" {
-			fmt.Println("  （Windows 环境不适用常驻任务，已隐藏「查看任务」）")
+		items = append(items, "查看配置信息", "退出")
+		configIdx := len(items) - 2 // 查看配置信息
+		exitIdx := len(items) - 1   // 退出
+
+		idx := utils.SelectMenu(items, "请选择操作（↑/↓ 移动，回车确认）: ")
+
+		// ESC 取消返回 -1，优先处理（避免与 viewTaskIdx=-1 冲突）
+		if idx == -1 {
+			color.Yellow("已取消\n")
+			fmt.Println()
+			continue
 		}
-		input := utils.ReadInput(">>> ", "")
-		switch input {
-		case "0": // 退出
-			fmt.Println("程序退出")
-			os.Exit(0)
-		case "1": // 添加证书
-			err := addCertificate()
-			if err != nil {
-				return err
-			}
-			continue
-		case "2": // 删除证书
-			err := deleteCertificate()
-			if err != nil {
-				return err
-			}
-			continue
-		case "3":
-			modifyKey()
-			continue
-		case "4": // 修改重载命令
-			err := modifyRestartCmd()
-			if err != nil {
-				return err
-			}
-			continue
-		case "5": // 更新证书
-			err := updateCertificates()
-			if err != nil {
-				return err
-			}
-			continue
-		case "6": // 更新到期检查时间
-			err := modifyExpirationDay()
-			if err != nil {
-				return err
-			}
-			continue
-		case "7": // 快速添加域名
-			err := findNginxPathCmd()
-			if err != nil {
-				return err
-			}
-			continue
-		case "8": // 查看任务（仅 Linux 显示；Windows 已隐藏，输入 8 时给出引导）
-			if runtime.GOOS == "windows" {
-				color.Yellow("Windows 环境不适用常驻任务，请使用任务计划程序定期执行 update（参见 README「计划任务设置」）\n")
-				continue
-			}
+		// 查看任务仅 Linux 显示（Windows 时 viewTaskIdx=-1 且上面已处理取消）
+		if viewTaskIdx >= 0 && idx == viewTaskIdx {
 			cPid := checkTask()
 			if cPid == "" {
 				color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
 			} else {
 				color.Green("当前任务PID: %s", cPid)
 			}
+			fmt.Println()
 			continue
-		case "9": // 获取配置（测试）
+		}
+
+		switch idx {
+		case 0: // 添加证书
+			err := addCertificate()
+			if err != nil {
+				return err
+			}
+		case 1: // 删除证书
+			err := deleteCertificate()
+			if err != nil {
+				return err
+			}
+		case 2: // 修改密钥
+			modifyKey()
+		case 3: // 修改重载命令
+			err := modifyRestartCmd()
+			if err != nil {
+				return err
+			}
+		case 4: // 更新证书
+			err := updateCertificates()
+			if err != nil {
+				return err
+			}
+		case 5: // 修改提前更新天数
+			err := modifyExpirationDay()
+			if err != nil {
+				return err
+			}
+		case 6: // 快速添加域名
+			err := findNginxPathCmd()
+			if err != nil {
+				return err
+			}
+		case configIdx: // 查看配置信息
 			err := getConfigInfo()
 			if err != nil {
 				return err
 			}
+		case exitIdx: // 退出
+			fmt.Println("程序退出")
+			os.Exit(0)
 		default:
-			fmt.Println("无效的输入，请重新输入")
-			continue
+			color.Yellow("已取消\n")
 		}
 		fmt.Println()
 	}
