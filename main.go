@@ -16,7 +16,7 @@ var Version string
 var rootCmd = &cobra.Command{
 	Use:   "ssl_assistant",
 	Short: "证书管理工具",
-	Long:  `SSL Assistant` + Version + ` 是一个基于 Go 语言开发的跨平台工具，用于SSL远程证书拉取，并自动完成SSL证书更新及生效流程。`,
+	Long:  `SSL Assistant ` + displayVersion() + ` 是一个基于 Go 语言开发的跨平台工具，用于SSL远程证书拉取，并自动完成SSL证书更新及生效流程。`,
 	// 错误由 main() 统一打印并以非零码退出（避免 RunE 双重打印与 usage 刷屏）
 	SilenceErrors: true,
 	SilenceUsage:  true,
@@ -98,12 +98,20 @@ var cronCmd = &cobra.Command{
 	},
 }
 
+// displayVersion 返回版本号，本地构建未注入时显示 dev
+func displayVersion() string {
+	if Version == "" {
+		return "dev"
+	}
+	return Version
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "显示版本信息",
 	Long:  `显示版本信息，包括程序名称、版本号、数据库模式与数据路径等。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("SSL Assistant %s\n", Version)
+		fmt.Printf("SSL Assistant %s\n", displayVersion())
 		fmt.Printf("项目地址: %s\n", "https://github.com/Youngxj/SSL-Assistant")
 		// 初始化数据库以确定当前模式（无数据时自动创建目录）
 		if err := db.InitDatabase(); err != nil {
@@ -209,7 +217,7 @@ func runInteractiveMenu() {
 			color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
 			utils.ReadInput("按回车返回菜单", "")
 		case "8":
-			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", Version)
+			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
 		case "9":
 			runMenuAction("检查更新", func() error {
 				// 菜单场景：内部已打印完整提示（含手动下载地址），不重复输出错误

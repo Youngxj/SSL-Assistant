@@ -668,9 +668,15 @@ func getCertificates() {
 		return
 	}
 
-	// 显示证书信息表格
+	// 空表时给出提示，避免渲染无意义的空表格
+	if len(certs) == 0 {
+		color.Yellow("暂无证书，可通过菜单「1=添加」或「7=快速添加域名」导入\n")
+		return
+	}
+
+	// 显示证书信息表格（公钥/私钥列只显示文件名，避免超长路径撑爆表格）
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "证书ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "公钥", "私钥"})
+	table.SetHeader([]string{"ID", "证书ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "证书文件", "私钥文件"})
 	for _, cert := range certs {
 		expireDay := time.Unix(cert.ExpireTime, 0).Sub(time.Now())
 		var certStatus string
@@ -678,6 +684,19 @@ func getCertificates() {
 			certStatus = "过期"
 		} else {
 			certStatus = "有效"
+		}
+		// 剩余天数：过期显示"已过期"，否则显示天数
+		remainDays := strconv.FormatInt(int64(expireDay.Hours()/24), 10)
+		if expireDay < 0 {
+			remainDays = "已过期"
+		}
+		// 路径为空时保持空串显示，避免 filepath.Base("") 返回 "."
+		certFile, keyFile := cert.CertPath, cert.KeyPath
+		if cert.CertPath != "" {
+			certFile = filepath.Base(cert.CertPath)
+		}
+		if cert.KeyPath != "" {
+			keyFile = filepath.Base(cert.KeyPath)
 		}
 
 		table.Append([]string{
@@ -687,10 +706,10 @@ func getCertificates() {
 			certStatus,
 			time.Unix(cert.CreateTime, 0).Format(time.DateOnly),
 			time.Unix(cert.ExpireTime, 0).Format(time.DateOnly),
-			strconv.FormatInt(int64(expireDay.Hours()/24), 10),
+			remainDays,
 			cert.CertSource,
-			cert.CertPath,
-			cert.KeyPath,
+			certFile,
+			keyFile,
 		})
 	}
 	table.Render()
@@ -740,6 +759,9 @@ func showCertificates() error {
 		}
 		menu += "、9=查看配置信息、0=退出"
 		fmt.Println("请输入操作：" + menu)
+		if runtime.GOOS == "windows" {
+			fmt.Println("  （Windows 环境不适用常驻任务，已隐藏「查看任务」）")
+		}
 		input := utils.ReadInput(">>> ", "")
 		switch input {
 		case "0": // 退出

@@ -145,9 +145,8 @@ func initDatabase() error {
 	// 尝试初始化SQLite数据库
 	err := initDB()
 	if err != nil {
-		// 如果SQLite初始化失败，尝试使用BadgerDB
-		fmt.Println("SQLite数据库初始化失败:", err)
-		color.Cyan("尝试使用纯Go实现的BadgerDB作为替代...\n")
+		// 如果SQLite初始化失败，尝试使用BadgerDB（一行精简提示，保留原因）
+		color.Cyan("SQLite 不可用（%v），已自动使用 BadgerDB（纯 Go 实现）\n", err)
 
 		err = initBadgerDB()
 		if err != nil {
@@ -156,7 +155,6 @@ func initDatabase() error {
 
 		// 使用BadgerDB实现
 		Interface = &BadgerImpl{}
-		color.Green("成功切换到BadgerDB\n")
 	} else {
 		// 使用SQLite实现
 		Interface = &SQLiteDB{}
