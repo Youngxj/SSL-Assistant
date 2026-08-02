@@ -1,16 +1,39 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+# 自动测试 + 构建发布
+# - push 到 main / 任意 PR：运行单元测试（CGO=0 走 BadgerDB、CGO=1 走 SQLite）与 vet
+# - push v* tag：通过测试后由 GoReleaser 交叉编译发布
 
 name: Go
 
 on:
   push:
-    tags:
-      - v*
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
 
 jobs:
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: "go.mod" # 使用 go.mod 文件中的 golang 版本
+
+      - name: Test (CGO=0, BadgerDB)
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: Test (CGO=1, SQLite)
+        run: CGO_ENABLED=1 go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
   build:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,4 +53,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-
