@@ -680,7 +680,13 @@ func showCertificates() error {
 	for {
 		getCertificates()
 		showPlatformStatus()
-		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、8=查看任务、9=查看配置信息、0=退出")
+		// 菜单项按平台动态生成：Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
+		menu := "1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）"
+		if runtime.GOOS != "windows" {
+			menu += "、8=查看任务"
+		}
+		menu += "、9=查看配置信息、0=退出"
+		fmt.Println("请输入操作：" + menu)
 		input := utils.ReadInput(">>> ", "")
 		switch input {
 		case "0": // 退出
@@ -725,7 +731,11 @@ func showCertificates() error {
 				return err
 			}
 			continue
-		case "8": // 查看任务
+		case "8": // 查看任务（仅 Linux 显示；Windows 已隐藏，输入 8 时给出引导）
+			if runtime.GOOS == "windows" {
+				color.Yellow("Windows 环境不适用常驻任务，请使用任务计划程序定期执行 update（参见 README「计划任务设置」）\n")
+				continue
+			}
 			cPid := checkTask()
 			if cPid == "" {
 				color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")

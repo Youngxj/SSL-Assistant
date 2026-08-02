@@ -195,13 +195,9 @@ func runInteractiveMenu() {
 				return findNginxPathCmd()
 			})
 		case "7":
-			runMenuAction("证书更新任务", func() error {
-				if err := initGuide(true); err != nil {
-					return err
-				}
-				cronTask(false)
-				return nil
-			})
+			// Windows 下 cron 常驻进程不适用（会阻塞窗口），引导使用任务计划程序
+			color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
+			utils.ReadInput("按回车返回菜单", "")
 		case "8":
 			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", Version)
 		case "9":
