@@ -25,12 +25,16 @@ import (
 
 // 常见的 Nginx 配置文件路径
 var defaultNginxPaths = []string{
-	"/www/server/panel/vhost/nginx/*.conf", // 宝塔
+	"/www/server/panel/vhost/nginx/*.conf", // 宝塔 Nginx
+	"/www/server/apache/vhost/*.conf",      // 宝塔 Apache
 	"/opt/1panel/www/conf.d/*.conf",        // 1panel
 	"/etc/nginx/nginx.conf",
 	"/etc/nginx/conf.d/*.conf",
 	"/usr/local/nginx/conf/nginx.conf",
 	"/usr/local/etc/nginx/nginx.conf",
+	"/etc/apache2/sites-enabled/*.conf", // Apache
+	"/etc/apache2/sites-available/*.conf",
+	"/etc/httpd/conf.d/*.conf",
 	"C:\\nginx\\conf\\nginx.conf",
 	"D:\\nginx\\conf\\nginx.conf",
 }
@@ -132,7 +136,7 @@ func findNginxConfigs(paths []string) []nginxSite {
 			}
 
 			for _, match := range matches {
-				found = append(found, parseNginxConfig(match)...)
+				found = append(found, parseConfigFile(match)...)
 			}
 		} else {
 			// 否则直接检查路径是否存在；目录自动补默认通配符 *.conf
@@ -140,10 +144,10 @@ func findNginxConfigs(paths []string) []nginxSite {
 				if info.IsDir() {
 					matches, _ := filepath.Glob(filepath.Join(path, "*.conf"))
 					for _, match := range matches {
-						found = append(found, parseNginxConfig(match)...)
+						found = append(found, parseConfigFile(match)...)
 					}
 				} else {
-					found = append(found, parseNginxConfig(path)...)
+					found = append(found, parseConfigFile(path)...)
 				}
 			}
 		}
@@ -196,6 +200,101 @@ func findServerBlocks(content string) []string {
 		pos = end + 1
 	}
 	return blocks
+}
+
+// virtualHostBlockRegex 匹配 Apache VirtualHost 块（大小写不敏感，支持属性如 *:443）
+var virtualHostBlockRegex = regexp.MustCompile(`(?is)<VirtualHost[^>]*>.*?</VirtualHost>`)
+
+// Apache 指令正则（大小写不敏感，包级复用避免重复编译）
+var (
+	apacheServerNameRegex  = regexp.MustCompile(`(?i)ServerName\s+(\S+)`)
+	apacheServerAliasRegex = regexp.MustCompile(`(?i)ServerAlias\s+([^\n<#]+)`)
+	apacheSSLKeyRegex      = regexp.MustCompile(`(?i)SSLCertificateKeyFile\s+(\S+)`)
+	apacheSSLCertRegex     = regexp.MustCompile(`(?i)SSLCertificateFile\s+(\S+)`)
+)
+
+// stripApacheComments 过滤 Apache 配置中的注释行（# 开头），避免注释中的指令被误匹配
+func stripApacheComments(content string) string {
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// findApacheBlocks 提取所有 <VirtualHost>...</VirtualHost> 块（Apache 不允许嵌套 VirtualHost）
+func findApacheBlocks(content string) []string {
+	return virtualHostBlockRegex.FindAllString(content, -1)
+}
+
+// isApacheConfig 判断配置内容是否为 Apache 语法（含 <VirtualHost 标签，大小写不敏感）
+func isApacheConfig(content string) bool {
+	return virtualHostOpenRegex.MatchString(content)
+}
+
+// virtualHostOpenRegex 匹配 <VirtualHost 开标签（大小写不敏感）
+var virtualHostOpenRegex = regexp.MustCompile(`(?i)<VirtualHost\b`)
+
+// parseConfigFile 按语法自动识别并解析 Nginx 或 Apache 配置文件
+func parseConfigFile(path string) []nginxSite {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if isApacheConfig(string(content)) {
+		return parseApacheConfig(path)
+	}
+	return parseNginxConfig(path)
+}
+
+// 解析 Apache 配置文件，返回含证书配置的站点列表（仅收集，不添加）
+func parseApacheConfig(path string) []nginxSite {
+	fmt.Println("解析配置文件:", path)
+
+	// 读取配置文件
+	content, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Println("读取配置文件失败:", err)
+		return nil
+	}
+
+	// 过滤注释行（# 开头），避免注释中的指令被误匹配
+	cleaned := stripApacheComments(string(content))
+
+	// 按 VirtualHost 块为单位解析
+	blocks := findApacheBlocks(cleaned)
+	if len(blocks) == 0 {
+		// 无 VirtualHost 块（如纯 Include），回退为整文件匹配
+		blocks = []string{cleaned}
+	}
+
+	var sites []nginxSite
+	for _, block := range blocks {
+		serverNameMatch := apacheServerNameRegex.FindStringSubmatch(block)
+		sslCertMatch := apacheSSLCertRegex.FindStringSubmatch(block)
+		sslKeyMatch := apacheSSLKeyRegex.FindStringSubmatch(block)
+
+		// 如果找到了 ServerName 和 SSLCertificateFile，则收集该站点
+		if len(serverNameMatch) > 0 && len(sslCertMatch) > 0 && len(sslKeyMatch) > 0 {
+			domains := []string{strings.TrimSpace(serverNameMatch[1])}
+			// ServerAlias 可包含多个域名（[^\n<#]+ 已排除行内注释）
+			if aliasMatch := apacheServerAliasRegex.FindStringSubmatch(block); len(aliasMatch) > 0 {
+				for _, d := range strings.Fields(aliasMatch[1]) {
+					domains = append(domains, d)
+				}
+			}
+			sites = append(sites, nginxSite{
+				Domain:   domains[0],
+				Domains:  domains,
+				CertPath: strings.TrimSpace(sslCertMatch[1]),
+				KeyPath:  strings.TrimSpace(sslKeyMatch[1]),
+			})
+		}
+	}
+	return sites
 }
 
 // 解析 Nginx 配置文件，返回含证书配置的站点列表（仅收集，不添加；添加由用户勾选后执行）
@@ -551,12 +650,20 @@ func findNginxCertPaths(domain string) (certPath, keyPath string, found bool) {
 	return "", "", false
 }
 
-// extractCertPathsFromFile 从单个 Nginx 配置文件中提取指定域名的 ssl 证书路径
+// extractCertPathsFromFile 从配置文件中提取指定域名的 ssl 证书路径（自动识别 Nginx / Apache 语法）
 func extractCertPathsFromFile(path, domain string) (string, string, bool) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", false
 	}
+	if isApacheConfig(string(content)) {
+		return extractApacheCertPaths(content, domain)
+	}
+	return extractNginxCertPaths(content, domain)
+}
+
+// extractNginxCertPaths 从 Nginx 配置内容中提取指定域名的证书路径
+func extractNginxCertPaths(content []byte, domain string) (string, string, bool) {
 	serverNameRegex := regexp.MustCompile(`server_name\s+([^;]+);`)
 	sslCertRegex := regexp.MustCompile(`ssl_certificate\s+([^;]+);`)
 	sslKeyRegex := regexp.MustCompile(`ssl_certificate_key\s+([^;]+);`)
@@ -573,6 +680,39 @@ func extractCertPathsFromFile(path, domain string) (string, string, bool) {
 			}
 			certMatch := sslCertRegex.FindStringSubmatch(block)
 			keyMatch := sslKeyRegex.FindStringSubmatch(block)
+			if len(certMatch) > 0 && len(keyMatch) > 0 {
+				return strings.TrimSpace(certMatch[1]), strings.TrimSpace(keyMatch[1]), true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// extractApacheCertPaths 从 Apache 配置内容中提取指定域名的证书路径
+func extractApacheCertPaths(content []byte, domain string) (string, string, bool) {
+	// 过滤注释行，与 parseApacheConfig 保持一致
+	cleaned := stripApacheComments(string(content))
+
+	blocks := findApacheBlocks(cleaned)
+	if len(blocks) == 0 {
+		// 无 VirtualHost 块时回退整文件匹配（与 parseApacheConfig 行为对齐）
+		blocks = []string{cleaned}
+	}
+	for _, block := range blocks {
+		serverNameMatch := apacheServerNameRegex.FindStringSubmatch(block)
+		if len(serverNameMatch) == 0 {
+			continue
+		}
+		names := []string{strings.TrimSpace(serverNameMatch[1])}
+		if aliasMatch := apacheServerAliasRegex.FindStringSubmatch(block); len(aliasMatch) > 0 {
+			names = append(names, strings.Fields(aliasMatch[1])...)
+		}
+		for _, name := range names {
+			if name != domain {
+				continue
+			}
+			certMatch := apacheSSLCertRegex.FindStringSubmatch(block)
+			keyMatch := apacheSSLKeyRegex.FindStringSubmatch(block)
 			if len(certMatch) > 0 && len(keyMatch) > 0 {
 				return strings.TrimSpace(certMatch[1]), strings.TrimSpace(keyMatch[1]), true
 			}
