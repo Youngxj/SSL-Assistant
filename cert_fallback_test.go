@@ -100,3 +100,21 @@ func TestAddSiteFromNginxLocalFallback(t *testing.T) {
 		t.Fatalf("CertSource 应为 local，实际: %s", cert.CertSource)
 	}
 }
+
+// readLocalCertFiles 读取本地证书/私钥文件内容，缺失返回空串
+func TestReadLocalCertFiles(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "c.pem")
+	keyPath := filepath.Join(dir, "k.key")
+	os.WriteFile(certPath, []byte("PUBLIC"), 0644)
+	os.WriteFile(keyPath, []byte("PRIVATE"), 0600)
+
+	pub, key := readLocalCertFiles(certPath, keyPath)
+	if pub != "PUBLIC" || key != "PRIVATE" {
+		t.Fatalf("读取失败: pub=%q key=%q", pub, key)
+	}
+	pub, key = readLocalCertFiles(filepath.Join(dir, "nope.pem"), "")
+	if pub != "" || key != "" {
+		t.Fatalf("缺失文件应返回空: pub=%q key=%q", pub, key)
+	}
+}

@@ -990,9 +990,9 @@ func getCertificates() {
 		return
 	}
 
-	// 显示证书信息表格（公钥/私钥列只显示文件名，避免超长路径撑爆表格）
+	// 显示证书信息表格（公钥/私钥列只显示文件名，避免超长路径撑爆表格；本地到期列为本地文件实际到期时间）
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "证书ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "证书文件", "私钥文件"})
+	table.SetHeader([]string{"ID", "证书ID", "域名", "状态", "创建时间", "过期时间", "本地到期", "剩余天数", "来源", "证书文件", "私钥文件"})
 	for _, cert := range certs {
 		expireDay := time.Unix(cert.ExpireTime, 0).Sub(time.Now())
 		var certStatus string
@@ -1005,6 +1005,13 @@ func getCertificates() {
 		remainDays := strconv.FormatInt(int64(expireDay.Hours()/24), 10)
 		if expireDay < 0 {
 			remainDays = "已过期"
+		}
+		// 本地证书文件实际到期时间（每张证书一次轻量文件读取，性能开销可忽略）
+		localExpire := "-"
+		if cert.CertPath != "" {
+			if e, err := getCertFileExpireTime(cert.CertPath); err == nil {
+				localExpire = time.Unix(e, 0).Format(time.DateOnly)
+			}
 		}
 		// 路径为空时保持空串显示，避免 filepath.Base("") 返回 "."
 		certFile, keyFile := cert.CertPath, cert.KeyPath
@@ -1022,6 +1029,7 @@ func getCertificates() {
 			certStatus,
 			time.Unix(cert.CreateTime, 0).Format(time.DateOnly),
 			time.Unix(cert.ExpireTime, 0).Format(time.DateOnly),
+			localExpire,
 			remainDays,
 			cert.CertSource,
 			certFile,
@@ -1234,8 +1242,13 @@ func updateCertificates() error {
 			failedNum++
 			continue
 		}
-		// 比较证书信息
-		if newCert.PublicKey == cert.PublicKey && newCert.PrivateKey == cert.PrivateKey {
+		// 比较基准：优先本地证书文件的实际内容（修复"DB 记录为云端证书、本地文件过期/非云端"时
+		// 比较 DB 恒相同导致本地过期文件得不到更新的问题）；文件不可读时回退 DB 记录
+		basePub, baseKey := readLocalCertFiles(cert.CertPath, cert.KeyPath)
+		if basePub == "" && baseKey == "" {
+			basePub, baseKey = cert.PublicKey, cert.PrivateKey
+		}
+		if newCert.PublicKey == basePub && newCert.PrivateKey == baseKey {
 			fmt.Printf("域名 %s 的证书信息未更新，无需重新下载\n", cert.Domain)
 			continue
 		}
@@ -1570,6 +1583,21 @@ func getCertFileExpireTime(path string) (int64, error) {
 		return 0, err
 	}
 	return endCert.NotAfter.UTC().Unix(), nil
+}
+
+// readLocalCertFiles 读取本地证书/私钥文件的实际内容；文件缺失或读取失败返回空串
+func readLocalCertFiles(certPath, keyPath string) (pub, key string) {
+	if certPath != "" {
+		if b, err := os.ReadFile(certPath); err == nil {
+			pub = string(b)
+		}
+	}
+	if keyPath != "" {
+		if b, err := os.ReadFile(keyPath); err == nil {
+			key = string(b)
+		}
+	}
+	return
 }
 
 // 初始化引导：未初始化时触发初始化或返回错误。
