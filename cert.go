@@ -452,8 +452,8 @@ func parseApacheConfig(path string) []nginxSite {
 			sites = append(sites, nginxSite{
 				Domain:   domains[0],
 				Domains:  domains,
-				CertPath: strings.TrimSpace(sslCertMatch[1]),
-				KeyPath:  strings.TrimSpace(sslKeyMatch[1]),
+				CertPath: trimQuotes(strings.TrimSpace(sslCertMatch[1])),
+				KeyPath:  trimQuotes(strings.TrimSpace(sslKeyMatch[1])),
 			})
 		}
 	}
@@ -491,8 +491,8 @@ func parseNginxConfig(path string) []nginxSite {
 		// 如果找到了 server_name 和 ssl_certificate，则收集该站点
 		if len(serverNameMatch) > 0 && len(sslCertMatch) > 0 && len(sslKeyMatch) > 0 {
 			serverName := strings.TrimSpace(serverNameMatch[1])
-			sslCert := strings.TrimSpace(sslCertMatch[1])
-			sslKey := strings.TrimSpace(sslKeyMatch[1])
+			sslCert := trimQuotes(strings.TrimSpace(sslCertMatch[1]))
+			sslKey := trimQuotes(strings.TrimSpace(sslKeyMatch[1]))
 
 			// 分割 server_name，可能有多个域名
 			domains := strings.Fields(serverName)
@@ -857,7 +857,7 @@ func extractNginxCertPaths(content []byte, domain string) (string, string, bool)
 			certMatch := sslCertRegex.FindStringSubmatch(block)
 			keyMatch := sslKeyRegex.FindStringSubmatch(block)
 			if len(certMatch) > 0 && len(keyMatch) > 0 {
-				return strings.TrimSpace(certMatch[1]), strings.TrimSpace(keyMatch[1]), true
+				return trimQuotes(strings.TrimSpace(certMatch[1])), trimQuotes(strings.TrimSpace(keyMatch[1])), true
 			}
 		}
 	}
@@ -890,7 +890,7 @@ func extractApacheCertPaths(content []byte, domain string) (string, string, bool
 			certMatch := apacheSSLCertRegex.FindStringSubmatch(block)
 			keyMatch := apacheSSLKeyRegex.FindStringSubmatch(block)
 			if len(certMatch) > 0 && len(keyMatch) > 0 {
-				return strings.TrimSpace(certMatch[1]), strings.TrimSpace(keyMatch[1]), true
+				return trimQuotes(strings.TrimSpace(certMatch[1])), trimQuotes(strings.TrimSpace(keyMatch[1])), true
 			}
 		}
 	}
@@ -1533,6 +1533,11 @@ func checkHasDomain(domain string) bool {
 		return false
 	}
 	return certInfo.Domain != ""
+}
+
+// trimQuotes 去掉字符串首尾的引号（Apache/Nginx 配置中的路径值可能带引号，如 SSLCertificateFile "path"）
+func trimQuotes(s string) string {
+	return strings.Trim(s, `"'`)
 }
 
 // containsString 判断字符串切片是否包含指定元素

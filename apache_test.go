@@ -132,6 +132,53 @@ SSLCertificateFile /etc/httpd/nohost.pem
 SSLCertificateKeyFile /etc/httpd/nohost.key
 `
 
+// Apache 配置路径带引号（小皮面板场景：SSLCertificateFile "D:/...crt"）不应残留引号
+const apacheQuoted = `
+<VirtualHost *:443>
+    ServerName cccc.yum6.cn
+    SSLCertificateFile "D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.crt"
+    SSLCertificateKeyFile 'D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.key'
+</VirtualHost>
+`
+
+// Nginx 配置路径带引号同样支持（ssl_certificate "/path";）
+const nginxQuoted = `
+server {
+    server_name www.qq.com;
+    ssl_certificate "/etc/nginx/ssl/qq/fullchain.pem";
+    ssl_certificate_key "/etc/nginx/ssl/qq/privkey.pem";
+}
+`
+
+// 路径值带引号时（Apache/Nginx 均支持）应去除首尾引号，避免路径残留导致文件操作失败
+func TestQuotedPaths(t *testing.T) {
+	dir := t.TempDir()
+	apPath := filepath.Join(dir, "apache.conf")
+	os.WriteFile(apPath, []byte(apacheQuoted), 0644)
+	ngPath := filepath.Join(dir, "nginx.conf")
+	os.WriteFile(ngPath, []byte(nginxQuoted), 0644)
+
+	// Apache 双引号 + 单引号路径
+	ap := parseApacheConfig(apPath)
+	if len(ap) != 1 || ap[0].CertPath != "D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.crt" || ap[0].KeyPath != "D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.key" {
+		t.Fatalf("Apache 带引号路径解析错误: %+v", ap)
+	}
+	// Nginx 双引号路径
+	ng := parseNginxConfig(ngPath)
+	if len(ng) != 1 || ng[0].CertPath != "/etc/nginx/ssl/qq/fullchain.pem" || ng[0].KeyPath != "/etc/nginx/ssl/qq/privkey.pem" {
+		t.Fatalf("Nginx 带引号路径解析错误: %+v", ng)
+	}
+	// extract 路径提取同样去引号
+	cp, kp, ok := extractCertPathsFromFile(apPath, "cccc.yum6.cn")
+	if !ok || cp != "D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.crt" || kp != "D:/phpstudy_pro/Extensions/Apache2.4.39/conf/ssl/cccc.yum6.cn.key" {
+		t.Fatalf("extract 带引号路径错误: ok=%v cp=%q kp=%q", ok, cp, kp)
+	}
+	// basename 不应再带尾部引号（用户报告的现象：cccc.yum6.cn.crt"）
+	if filepath.Base(ap[0].CertPath) != "cccc.yum6.cn.crt" {
+		t.Fatalf("basename 应无尾部引号: %q", filepath.Base(ap[0].CertPath))
+	}
+}
+
 func TestExtractApacheCertPathsNoBlock(t *testing.T) {
 	// 单元级验证 extractApacheCertPaths 内部回退（无 VirtualHost 块时整文件匹配）。
 	// 注意：真实分发场景下，不含 <VirtualHost 的配置会被 isApacheConfig 判为 Nginx 语法，
