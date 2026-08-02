@@ -2,10 +2,11 @@ package db
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+	"strconv"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -48,36 +49,39 @@ func closeBadgerDB() {
 	}
 }
 
-// 保存配置信息到Badger
-func saveConfigToBadger(key, value string) error {
-	return badgerDB.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte("config:"+key), []byte(value))
-	})
-}
-
-// 从Badger获取配置信息
-func getConfigFromBadger(key string) (string, error) {
-	var value string
-	err := badgerDB.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("config:" + key))
-		if err != nil {
+// getNextBadgerID 生成唯一自增ID（事务内原子读写，避免时间戳碰撞覆盖）
+func getNextBadgerID() (int, error) {
+	var id int
+	err := badgerDB.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte("meta:next_id"))
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			id = 1
+		} else if err != nil {
 			return err
+		} else {
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			id, err = strconv.Atoi(string(val))
+			if err != nil {
+				return err
+			}
+			id++
 		}
-
-		return item.Value(func(val []byte) error {
-			value = string(val)
-			return nil
-		})
+		return txn.Set([]byte("meta:next_id"), []byte(strconv.Itoa(id)))
 	})
-
-	return value, err
+	return id, err
 }
 
 // 添加证书到Badger
 func addCertificateToBadgerDB(cert Certificate) error {
 	// 生成唯一ID
-	timeNow := time.Now().UnixNano()
-	cert.ID = int(timeNow % 1000000)
+	id, err := getNextBadgerID()
+	if err != nil {
+		return err
+	}
+	cert.ID = id
 
 	// 序列化证书
 	certData, err := json.Marshal(cert)
@@ -87,6 +91,13 @@ func addCertificateToBadgerDB(cert Certificate) error {
 
 	// 保存证书
 	return badgerDB.Update(func(txn *badger.Txn) error {
+		// 检查域名是否已存在（与 SQLite 的 UNIQUE 约束行为保持一致）
+		if _, err := txn.Get([]byte(fmt.Sprintf("domain:%s", cert.Domain))); err == nil {
+			return fmt.Errorf("域名 %s 的证书信息已存在", cert.Domain)
+		} else if !errors.Is(err, badger.ErrKeyNotFound) {
+			return err
+		}
+
 		// 保存证书数据
 		err := txn.Set([]byte(fmt.Sprintf("cert:%d", cert.ID)), certData)
 		if err != nil {
@@ -167,6 +178,9 @@ func getCertificateFromBadger(id int) (Certificate, error) {
 			return json.Unmarshal(val, &cert)
 		})
 	})
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return cert, ErrNotFound
+	}
 
 	return cert, err
 }
@@ -189,6 +203,9 @@ func getDomainCertificateFromBadger(domain string) (Certificate, error) {
 			return err
 		})
 	})
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return cert, ErrNotFound
+	}
 	if err != nil {
 		return cert, err
 	}
