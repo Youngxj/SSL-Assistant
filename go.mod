@@ -10,6 +10,8 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/robfig/cron/v3 v3.0.2-0.20210106135023-bc59245fe10e
 	github.com/spf13/cobra v1.7.0
+	golang.org/x/sys v0.25.0
+	golang.org/x/term v0.15.0
 )
 
 require (
@@ -32,5 +34,4 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/net v0.0.0-20201021035429-f5854403a974 // indirect
-	golang.org/x/sys v0.25.0 // indirect
 )
