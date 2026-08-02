@@ -171,16 +171,57 @@ func discoverPhpstudyFromRoot(root string) []string {
 	return paths
 }
 
-// findNginxConfigs 寻找 Nginx 配置文件，聚合返回解析出的站点（按主域名去重，不立即添加）
+// defaultCertDirs 证书文件目录（新版宝塔将证书统一存于 /www/server/panel/vhost/cert/<域名>/，Nginx/Apache 共用）
+var defaultCertDirs = []string{"/www/server/panel/vhost/cert"}
+
+// scanCertDir 扫描证书目录：第一层子目录名为域名，第二层为 fullchain.pem/privkey.pem 证书文件。
+// 返回按目录名识别出的站点（域名 + 证书/私钥路径），目录不存在或文件缺失时返回空。
+func scanCertDir(certRoot string) []nginxSite {
+	var sites []nginxSite
+	// 递归两层：certRoot/<域名>/fullchain.pem
+	matches, err := filepath.Glob(filepath.Join(certRoot, "*", "fullchain.pem"))
+	if err != nil {
+		return sites
+	}
+	for _, certPath := range matches {
+		domain := filepath.Base(filepath.Dir(certPath))
+		keyPath := filepath.Join(filepath.Dir(certPath), "privkey.pem")
+		if _, err := os.Stat(keyPath); err != nil {
+			// 缺少私钥的证书目录跳过
+			continue
+		}
+		sites = append(sites, nginxSite{
+			Domain:   domain,
+			Domains:  []string{domain},
+			CertPath: certPath,
+			KeyPath:  keyPath,
+		})
+	}
+	return sites
+}
+
+// scanAllCertDirs 扫描全部证书目录（宝塔新版），聚合返回站点
+func scanAllCertDirs() []nginxSite {
+	var sites []nginxSite
+	for _, dir := range defaultCertDirs {
+		sites = append(sites, scanCertDir(dir)...)
+	}
+	return sites
+}
+
+// findNginxConfigs 寻找 Nginx 配置文件，聚合返回解析出的站点（按主域名去重合并，不立即添加）
 // paths 为空时使用默认路径并自动探测面板（小皮 phpstudy）站点目录
 func findNginxConfigs(paths []string) []nginxSite {
 	color.Cyan("正在寻找 Nginx 配置文件...")
-	var sites []nginxSite
-	seen := make(map[string]bool)
 
 	// 智能探测面板（小皮 phpstudy）站点目录并合并
 	paths = append(paths, discoverPanelPaths()...)
 
+	// 证书目录扫描（新版宝塔统一证书目录，按域名目录自动识别）
+	certSites := scanAllCertDirs()
+
+	// 配置解析（宝塔/1Panel/原生 Nginx/Apache 等）
+	var configSites []nginxSite
 	for _, path := range paths {
 		fmt.Println("正在检索目录: ", path)
 		var found []nginxSite
@@ -207,16 +248,82 @@ func findNginxConfigs(paths []string) []nginxSite {
 				}
 			}
 		}
-		// 同一域名可能出现在多个配置文件，去重
+		// 同一域名可能出现在多个配置文件，按主域名去重后收集
 		for _, s := range found {
-			if s.Domain == "" || seen[s.Domain] {
+			if s.Domain == "" {
 				continue
 			}
-			seen[s.Domain] = true
-			sites = append(sites, s)
+			configSites = append(configSites, s)
 		}
 	}
-	return sites
+	return mergeSites(certSites, configSites)
+}
+
+// mergeSites 合并证书目录站点与配置解析站点：
+// 证书目录优先；配置解析站点仅在与证书目录站点 Domains 有交集时合并
+// （目录名与 server_name 首项不一致场景，保留面板权威路径、Domains 取并集）。
+// 配置解析站点之间维持按主域名去重，不互相交集合并（避免误吞不同证书的站点）。
+func mergeSites(certSites, configSites []nginxSite) []nginxSite {
+	var out []nginxSite
+
+	// 1. 证书目录站点（面板权威路径，优先保留）；out 前段与 certSites 严格一一对应（第 3 步依赖该索引）
+	for _, s := range certSites {
+		out = append(out, s)
+	}
+
+	// 2. 配置解析站点：按主域名去重（同域名取 Domains 并集）
+	var cfg []nginxSite
+	cfgIndex := make(map[string]int)
+	for _, s := range configSites {
+		if s.Domain == "" {
+			continue
+		}
+		if i, ok := cfgIndex[s.Domain]; ok {
+			cfg[i].Domains = unionStrings(cfg[i].Domains, s.Domains)
+			continue
+		}
+		cfgIndex[s.Domain] = len(cfg)
+		cfg = append(cfg, s)
+	}
+
+	// 3. 仅 cfg 站点与证书目录站点有 Domains 交集时合并（out 前段与 certSites 索引一致）
+	for _, s := range cfg {
+		merged := false
+		for i := range certSites {
+			if shareDomains(certSites[i].Domains, s.Domains) {
+				out[i].Domains = unionStrings(out[i].Domains, s.Domains)
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// shareDomains 判断两个域名列表是否有交集
+func shareDomains(a, b []string) bool {
+	for _, x := range a {
+		if containsString(b, x) {
+			return true
+		}
+	}
+	return false
+}
+
+// unionStrings 合并两个字符串列表（去重，保持顺序）
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range append(append([]string{}, a...), b...) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // serverBlockStartRegex 匹配 server 块起始（server 后跟空白与左花括号，不会误匹配 server_name）
@@ -682,8 +789,20 @@ func addCertificate() error {
 	return err
 }
 
-// findNginxCertPaths 从默认配置路径（宝塔/1Panel/原生 Nginx、面板自动探测）中查找指定域名的证书路径
+// findNginxCertPaths 从默认配置路径（宝塔/1Panel/原生 Nginx、面板自动探测、宝塔证书目录）中查找指定域名的证书路径
 func findNginxCertPaths(domain string) (certPath, keyPath string, found bool) {
+	// 优先直查证书目录（新版宝塔 cert/<域名>/fullchain.pem，Nginx/Apache 共用）
+	for _, certRoot := range defaultCertDirs {
+		cp := filepath.Join(certRoot, domain, "fullchain.pem")
+		kp := filepath.Join(certRoot, domain, "privkey.pem")
+		if _, err := os.Stat(cp); err == nil {
+			if _, err := os.Stat(kp); err == nil {
+				return cp, kp, true
+			}
+		}
+	}
+
+	// 再查配置文件（宝塔/1Panel/原生 Nginx、面板自动探测）
 	paths := append(defaultNginxPaths, discoverPanelPaths()...)
 	for _, path := range paths {
 		if strings.Contains(path, "*") {
