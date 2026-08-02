@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/olekukonko/tablewriter"
@@ -97,15 +99,20 @@ func initConfig() {
 
 	color.Green("初始化成功")
 
-	// 寻找 Nginx 配置文件
-	findNginxConfigs(defaultNginxPaths)
+	// 寻找 Nginx 配置文件，返回找到的证书配置数量（获取失败/重复也算已找到，避免误导）
+	found := findNginxConfigs(defaultNginxPaths)
 
-	color.Yellow("已完成自动检索 Nginx 配置文件，接下来可自定义配置文件路径，如无自定义可跳过")
-	// 输入自定义Nginx配置文件路径
-	err = findNginxPathCmd()
-	if err != nil {
-		color.Red("%s", err)
-		return
+	// 默认路径已找到证书配置则不再询问自定义路径（issue #3：避免用户困惑于"必须输入路径"）
+	if found > 0 {
+		color.Green("已自动检索到 %d 个证书配置，无需再配置自定义路径\n", found)
+	} else {
+		color.Yellow("默认路径未检索到证书配置，可自定义配置文件路径（直接回车跳过）")
+		// 输入自定义Nginx配置文件路径
+		err = findNginxPathCmd()
+		if err != nil {
+			color.Red("%s", err)
+			return
+		}
 	}
 
 	err = showCertificates()
@@ -115,9 +122,10 @@ func initConfig() {
 	}
 }
 
-// 寻找 Nginx 配置文件
-func findNginxConfigs(paths []string) {
+// 寻找 Nginx 配置文件，返回找到的证书配置数量
+func findNginxConfigs(paths []string) int {
 	color.Cyan("正在寻找 Nginx 配置文件...")
+	found := 0
 
 	for _, path := range paths {
 		fmt.Println("正在检索目录: ", path)
@@ -129,43 +137,91 @@ func findNginxConfigs(paths []string) {
 			}
 
 			for _, match := range matches {
-				parseNginxConfig(match)
+				found += parseNginxConfig(match)
 			}
 		} else {
 			// 否则直接检查文件是否存在
 			if _, err := os.Stat(path); err == nil {
-				parseNginxConfig(path)
+				found += parseNginxConfig(path)
 			}
 		}
 	}
+	return found
 }
 
-// 解析 Nginx 配置文件
-func parseNginxConfig(path string) {
+// serverBlockStartRegex 匹配 server 块起始（server 后跟空白与左花括号，不会误匹配 server_name）
+var serverBlockStartRegex = regexp.MustCompile(`(?m)server\s*\{`)
+
+// findServerBlocks 按大括号深度匹配提取所有 server { ... } 块（支持 location/if 等嵌套块）
+func findServerBlocks(content string) []string {
+	var blocks []string
+	pos := 0
+	for {
+		loc := serverBlockStartRegex.FindStringIndex(content[pos:])
+		if loc == nil {
+			break
+		}
+		start := pos + loc[0]
+		braceIdx := start + strings.Index(content[start:pos+loc[1]], "{")
+		depth := 0
+		end := -1
+		for i := braceIdx; i < len(content); i++ {
+			switch content[i] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					end = i
+				}
+			}
+			if end > 0 {
+				break
+			}
+		}
+		if end < 0 {
+			break
+		}
+		blocks = append(blocks, content[start:end+1])
+		pos = end + 1
+	}
+	return blocks
+}
+
+// 解析 Nginx 配置文件，返回匹配到证书配置的 server 块数量
+func parseNginxConfig(path string) int {
 	fmt.Println("解析配置文件:", path)
 
 	// 读取配置文件
 	content, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Println("读取配置文件失败:", err)
-		return
+		return 0
 	}
 
-	// 使用正则表达式匹配 server_name 和 ssl_certificate
+	// 按 server 块为单位解析，避免多个 server 块之间字段错位（支持嵌套块）
 	serverNameRegex := regexp.MustCompile(`server_name\s+([^;]+);`)
 	sslCertRegex := regexp.MustCompile(`ssl_certificate\s+([^;]+);`)
 	sslKeyRegex := regexp.MustCompile(`ssl_certificate_key\s+([^;]+);`)
 
-	serverNameMatches := serverNameRegex.FindAllStringSubmatch(string(content), -1)
-	sslCertMatches := sslCertRegex.FindAllStringSubmatch(string(content), -1)
-	sslKeyMatches := sslKeyRegex.FindAllStringSubmatch(string(content), -1)
+	blocks := findServerBlocks(string(content))
+	if len(blocks) == 0 {
+		// 无 server 块（如纯 include 或 http 块），回退为整文件匹配
+		blocks = []string{string(content)}
+	}
 
-	// 如果找到了 server_name 和 ssl_certificate，则添加证书
-	if len(serverNameMatches) > 0 && len(sslCertMatches) > 0 && len(sslKeyMatches) > 0 {
-		for i := 0; i < len(serverNameMatches) && i < len(sslCertMatches) && i < len(sslKeyMatches); i++ {
-			serverName := strings.TrimSpace(serverNameMatches[i][1])
-			sslCert := strings.TrimSpace(sslCertMatches[i][1])
-			sslKey := strings.TrimSpace(sslKeyMatches[i][1])
+	matched := 0
+	for _, block := range blocks {
+		serverNameMatch := serverNameRegex.FindStringSubmatch(block)
+		sslCertMatch := sslCertRegex.FindStringSubmatch(block)
+		sslKeyMatch := sslKeyRegex.FindStringSubmatch(block)
+
+		// 如果找到了 server_name 和 ssl_certificate，则添加证书
+		if len(serverNameMatch) > 0 && len(sslCertMatch) > 0 && len(sslKeyMatch) > 0 {
+			matched++
+			serverName := strings.TrimSpace(serverNameMatch[1])
+			sslCert := strings.TrimSpace(sslCertMatch[1])
+			sslKey := strings.TrimSpace(sslKeyMatch[1])
 
 			// 分割 server_name，可能有多个域名
 			domains := strings.Fields(serverName)
@@ -179,10 +235,23 @@ func parseNginxConfig(path string) {
 				}
 
 				// 获取证书信息
-				cert, err := getCertificateInfo(domain, "")
+				cert, err := getCertificateInfo(domain, "", 0)
 				if err != nil {
 					fmt.Printf("获取域名 %s 的证书信息失败: %v\n", domain, err)
 					continue
+				}
+				// SAN 校验：server_name 中的其他域名是否在证书覆盖范围内
+				if cert.CertDomains != "" {
+					covered := strings.Split(cert.CertDomains, ",")
+					var missing []string
+					for _, d := range domains {
+						if !containsString(covered, d) {
+							missing = append(missing, d)
+						}
+					}
+					if len(missing) > 0 {
+						color.Yellow("警告: 域名 %s 不在证书覆盖范围内（证书仅覆盖: %s）\n", strings.Join(missing, ","), cert.CertDomains)
+					}
 				}
 				// 设置证书路径
 				cert.CertPath = sslCert
@@ -199,38 +268,76 @@ func parseNginxConfig(path string) {
 			}
 		}
 	}
+	return matched
 }
 
 // 获取证书信息 certd/west
 // @param domain 域名
 // @param certSource 证书来源(west/certd)，传空自动判断
+// @param certID 来源平台证书ID（certd证书仓库ID，更新时优先使用，0表示用域名查询）
 // @return db.Certificate 证书信息
-func getCertificateInfo(domain string, certSource string) (db.Certificate, error) {
+func getCertificateInfo(domain string, certSource string, certID int) (db.Certificate, error) {
 	var cert db.Certificate
+	var crt, key []byte
 	var err error
-	var crt, _, key []byte
+
+	// 处理 Certd 返回的证书详情（ID/覆盖域名/有效期）
+	var certDetailNotAfter int64
+	applyCertdDetail := func(detail *certd.CertDetail) {
+		if detail == nil {
+			return
+		}
+		if detail.ID > 0 {
+			cert.CertID = detail.ID
+		}
+		if len(detail.Domains) > 0 {
+			cert.CertDomains = strings.Join(detail.Domains, ",")
+		}
+		if detail.NotAfter > 0 {
+			certDetailNotAfter = detail.NotAfter
+		}
+	}
+
 	switch certSource {
 	case "west":
 		color.Yellow("正在尝试使用West获取证书信息...\n")
 		err, crt, _, key = west.GetCert(domain)
-		break
+		if err != nil {
+			return db.Certificate{}, err
+		}
+		cert.CertSource = "west"
 	case "certd":
 		color.Yellow("正在尝试使用Certd获取证书信息...\n")
-		err, crt, _, key = certd.GetCertificateInfo(domain)
-		break
+		var detail *certd.CertDetail
+		crt, key, detail, err = certd.GetCertificateInfo(domain, certID)
+		if err != nil {
+			if errors.Is(err, certd.ErrCertApplying) {
+				color.Yellow("Certd已自动触发证书申请，请稍后重新执行获取\n")
+			} else {
+				color.Red("Certd:%s\n", err)
+			}
+			return db.Certificate{}, err
+		}
+		cert.CertSource = "certd"
+		applyCertdDetail(detail)
 	default:
 		color.Yellow("正在尝试使用West获取证书信息...\n")
 		err, crt, _, key = west.GetCert(domain)
 		if err != nil {
 			color.Red("West:%s\n", err)
 			color.Yellow("正在尝试使用Certd获取证书信息...\n")
-			err, crt, _, key = certd.GetCertificateInfo(domain)
+			var detail *certd.CertDetail
+			crt, key, detail, err = certd.GetCertificateInfo(domain, certID)
 			if err != nil {
-				color.Red("Certd:%s\n", err)
+				if errors.Is(err, certd.ErrCertApplying) {
+					color.Yellow("Certd已自动触发证书申请，请稍后重新执行获取\n")
+				} else {
+					color.Red("Certd:%s\n", err)
+				}
 				return db.Certificate{}, err
-			} else {
-				cert.CertSource = "certd"
 			}
+			cert.CertSource = "certd"
+			applyCertdDetail(detail)
 		} else {
 			cert.CertSource = "west"
 		}
@@ -238,12 +345,25 @@ func getCertificateInfo(domain string, certSource string) (db.Certificate, error
 	if err != nil {
 		return db.Certificate{}, err
 	}
-	endCert := utils.ParseCertificate(crt)
+	endCert, err := utils.ParseCertificate(crt)
+	if err != nil {
+		return db.Certificate{}, fmt.Errorf("解析域名 %s 的证书失败: %v", domain, err)
+	}
 	utils.ShowCertificateInfo(endCert)
 	// 设置证书信息
 	cert.Domain = domain
 	cert.CreateTime = endCert.NotBefore.UTC().Unix()
 	cert.ExpireTime = endCert.NotAfter.UTC().Unix()
+	if certDetailNotAfter > 0 {
+		// certd detail.notAfter 为毫秒时间戳（源码 getTime()），需转为秒
+		serverExpire := certDetailNotAfter / 1000
+		// 合理性校验：与证书解析值偏差超过1天则采用本地解析值（避免平台数据异常导致判断错乱）
+		if diff := serverExpire - cert.ExpireTime; diff < -86400 || diff > 86400 {
+			color.Yellow("注意: certd返回的有效期(%d)与证书解析值(%d)偏差过大，采用本地解析值\n", serverExpire, cert.ExpireTime)
+		} else {
+			cert.ExpireTime = serverExpire
+		}
+	}
 	if cert.ExpireTime < time.Now().Unix() {
 		cert.Status = "过期"
 	} else {
@@ -265,7 +385,7 @@ func addCertificate() error {
 	domain = strings.TrimSpace(domain)
 
 	// 获取证书信息
-	cert, err := getCertificateInfo(domain, "")
+	cert, err := getCertificateInfo(domain, "", 0)
 	if err != nil {
 		return fmt.Errorf("获取证书信息失败: %s", err)
 	}
@@ -274,17 +394,33 @@ func addCertificate() error {
 		return fmt.Errorf("域名 %s 的证书信息已存在，无需重复添加\n", domain)
 	}
 
-	// 输入证书路径
-	fmt.Print("请输入证书存放路径（需包含文件名）: ")
-	certPath, _ := reader.ReadString('\n')
-	certPath = strings.TrimSpace(certPath)
-	cert.CertPath = certPath
+	// 自动从宝塔/Nginx 配置匹配该域名的证书路径（issue #3：无需手动输入路径）
+	certPath, keyPath, found := findNginxCertPaths(domain)
+	if found {
+		fmt.Printf("已自动从 Nginx 配置找到证书路径:\n  证书: %s\n  私钥: %s\n", certPath, keyPath)
+		fmt.Print("是否使用自动匹配的路径？(y/n): ")
+		useAuto, _ := reader.ReadString('\n')
+		useAuto = strings.TrimSpace(useAuto)
+		if useAuto == "y" || useAuto == "Y" {
+			cert.CertPath = certPath
+			cert.KeyPath = keyPath
+		} else {
+			found = false
+		}
+	}
+	if !found {
+		// 输入证书路径
+		fmt.Print("请输入证书存放路径（需包含文件名）: ")
+		certPath, _ := reader.ReadString('\n')
+		certPath = strings.TrimSpace(certPath)
+		cert.CertPath = certPath
 
-	// 输入私钥路径
-	fmt.Print("请输入私钥存放路径（需包含文件名）: ")
-	keyPath, _ := reader.ReadString('\n')
-	keyPath = strings.TrimSpace(keyPath)
-	cert.KeyPath = keyPath
+		// 输入私钥路径
+		fmt.Print("请输入私钥存放路径（需包含文件名）: ")
+		keyPath, _ := reader.ReadString('\n')
+		keyPath = strings.TrimSpace(keyPath)
+		cert.KeyPath = keyPath
+	}
 
 	// 保存证书信息
 	err = db.AddCertificateToDBWrapper(cert)
@@ -302,6 +438,60 @@ func addCertificate() error {
 	return err
 }
 
+// findNginxCertPaths 从默认 Nginx 配置路径（宝塔/1Panel/原生 Nginx）中查找指定域名的证书路径
+func findNginxCertPaths(domain string) (certPath, keyPath string, found bool) {
+	for _, path := range defaultNginxPaths {
+		if strings.Contains(path, "*") {
+			matches, err := filepath.Glob(path)
+			if err != nil {
+				continue
+			}
+			for _, match := range matches {
+				if cp, kp, ok := extractCertPathsFromFile(match, domain); ok {
+					return cp, kp, true
+				}
+			}
+		} else {
+			if _, err := os.Stat(path); err == nil {
+				if cp, kp, ok := extractCertPathsFromFile(path, domain); ok {
+					return cp, kp, true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
+// extractCertPathsFromFile 从单个 Nginx 配置文件中提取指定域名的 ssl 证书路径
+func extractCertPathsFromFile(path, domain string) (string, string, bool) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", false
+	}
+	serverNameRegex := regexp.MustCompile(`server_name\s+([^;]+);`)
+	sslCertRegex := regexp.MustCompile(`ssl_certificate\s+([^;]+);`)
+	sslKeyRegex := regexp.MustCompile(`ssl_certificate_key\s+([^;]+);`)
+
+	blocks := findServerBlocks(string(content))
+	for _, block := range blocks {
+		serverNameMatch := serverNameRegex.FindStringSubmatch(block)
+		if len(serverNameMatch) == 0 {
+			continue
+		}
+		for _, name := range strings.Fields(strings.TrimSpace(serverNameMatch[1])) {
+			if name != domain {
+				continue
+			}
+			certMatch := sslCertRegex.FindStringSubmatch(block)
+			keyMatch := sslKeyRegex.FindStringSubmatch(block)
+			if len(certMatch) > 0 && len(keyMatch) > 0 {
+				return strings.TrimSpace(certMatch[1]), strings.TrimSpace(keyMatch[1]), true
+			}
+		}
+	}
+	return "", "", false
+}
+
 // 删除证书
 func deleteCertificate() error {
 	initGuide(false)
@@ -317,17 +507,68 @@ func deleteCertificate() error {
 		return fmt.Errorf("证书 ID 必须是整数")
 	}
 
+	// 获取证书信息（用于删除证书文件）
+	cert, err := db.GetCertificateByIDWrapper(id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return fmt.Errorf("证书%s不存在", idStr)
+		}
+		return fmt.Errorf("获取证书信息失败: %s", err)
+	}
+
 	// 删除证书
 	err = db.DeleteCertificateFromDBWrapper(id)
 	if err != nil {
-		if err.Error() == "Key not found" {
-			return fmt.Errorf("证书%s不存在", idStr)
-		}
 		return fmt.Errorf("删除证书失败: %s", err)
 	}
 
+	// 删除证书文件前检查是否被其他记录共享（多域名复用同一证书文件时只删记录、保留文件）
+	if cert.CertPath != "" || cert.KeyPath != "" {
+		shared, err := isCertFileShared(cert)
+		if err != nil {
+			color.Yellow("检查证书文件共享状态失败，仅删除数据库记录（文件已保留）: %v\n", err)
+		} else if shared {
+			color.Yellow("证书文件被其他站点共享，仅删除数据库记录，保留证书文件\n")
+		} else {
+			removeCertFile(cert.CertPath)
+			removeCertFile(cert.KeyPath)
+		}
+	}
+
 	color.Green("删除证书成功")
-	return err
+	return nil
+}
+
+// removeCertFile 删除证书文件，文件不存在时忽略，其他错误给出提示
+func removeCertFile(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		color.Yellow("删除证书文件失败 %s: %v\n", path, err)
+	}
+}
+
+// isCertFileShared 检查证书文件路径是否被其他证书记录引用
+func isCertFileShared(cert db.Certificate) (bool, error) {
+	all, err := db.GetAllCertificatesWrapper()
+	if err != nil {
+		return false, err
+	}
+	certPath := filepath.Clean(cert.CertPath)
+	keyPath := filepath.Clean(cert.KeyPath)
+	for _, other := range all {
+		if other.ID == cert.ID {
+			continue
+		}
+		if certPath != "" && certPath != "." && filepath.Clean(other.CertPath) == certPath {
+			return true, nil
+		}
+		if keyPath != "" && keyPath != "." && filepath.Clean(other.KeyPath) == keyPath {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // 获取证书并渲染表格
@@ -341,7 +582,7 @@ func getCertificates() {
 
 	// 显示证书信息表格
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "公钥", "私钥"})
+	table.SetHeader([]string{"ID", "证书ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "公钥", "私钥"})
 	for _, cert := range certs {
 		expireDay := time.Unix(cert.ExpireTime, 0).Sub(time.Now())
 		var certStatus string
@@ -353,6 +594,7 @@ func getCertificates() {
 
 		table.Append([]string{
 			strconv.Itoa(cert.ID),
+			strconv.Itoa(cert.CertID),
 			cert.Domain,
 			certStatus,
 			time.Unix(cert.CreateTime, 0).Format(time.DateOnly),
@@ -498,24 +740,40 @@ func updateCertificates() error {
 	}
 
 	updateNum := 0
+	failedNum := 0
+	// 提前读取配置，避免循环内重复加载 ini 文件
+	BeforeExpirationDay, _ := config.GetConfig("", "before_expiration_day")
+	day, err := strconv.ParseInt(BeforeExpirationDay, 10, 64)
+	if err != nil {
+		day = int64(defaultBeforeExpirationDay)
+	}
 	// 更新每个证书
 	for _, cert := range certificates {
 		fmt.Printf("正在更新域名 %s 的证书...\n", cert.Domain)
 
-		BeforeExpirationDay, _ := config.GetConfig("", "before_expiration_day")
-		day, err := strconv.ParseInt(BeforeExpirationDay, 10, 64)
-		if err != nil {
-			day = int64(defaultBeforeExpirationDay)
+		// 判断是否需要更新：优先以证书文件的实际过期时间为准，
+		// 避免"网站文件已过期但数据库记录仍显示有效"导致漏更新（issue #3 评论）
+		needUpdate := false
+		if cert.CertPath != "" {
+			if fileExpire, err := getCertFileExpireTime(cert.CertPath); err == nil {
+				needUpdate = fileExpire-(86400*day) <= time.Now().Unix()
+			} else {
+				// 证书文件不存在或无法解析，回退用数据库记录的过期时间判断
+				needUpdate = cert.ExpireTime-(86400*day) <= time.Now().Unix()
+			}
+		} else {
+			needUpdate = cert.ExpireTime-(86400*day) <= time.Now().Unix()
 		}
-		if cert.ExpireTime-(86400*day) > time.Now().Unix() {
+		if !needUpdate {
 			fmt.Printf("域名 %s 的证书未过期，跳过更新\n", cert.Domain)
 			continue
 		}
 
 		var newCert db.Certificate
-		newCert, err = getCertificateInfo(cert.Domain, cert.CertSource)
+		newCert, err = getCertificateInfo(cert.Domain, cert.CertSource, cert.CertID)
 		if err != nil {
 			fmt.Printf("获取域名 %s 的证书信息失败: %v\n", cert.Domain, err)
+			failedNum++
 			continue
 		}
 		// 比较证书信息
@@ -528,6 +786,13 @@ func updateCertificates() error {
 		newCert.CertPath = cert.CertPath
 		newCert.KeyPath = cert.KeyPath
 		newCert.ID = cert.ID
+		// 保留原有平台证书ID与覆盖域名（非certd来源或detail缺失时不会被清空）
+		if newCert.CertID == 0 {
+			newCert.CertID = cert.CertID
+		}
+		if newCert.CertDomains == "" {
+			newCert.CertDomains = cert.CertDomains
+		}
 
 		// 更新证书信息
 		err = db.UpdateCertificateInDBWrapper(newCert)
@@ -544,19 +809,23 @@ func updateCertificates() error {
 		updateNum++
 	}
 
-	if updateNum == 0 {
+	if updateNum == 0 && failedNum == 0 {
 		fmt.Println("本次没有需要更新的证书")
 	} else {
-		// 执行重载命令
-		err = executeRestartCmd()
-		if err != nil {
-			return err
+		if updateNum > 0 {
+			// 执行重载命令
+			err = executeRestartCmd()
+			if err != nil {
+				return err
+			}
 		}
-
+		if failedNum > 0 {
+			return fmt.Errorf("更新完成，但有 %d 个证书获取/更新失败", failedNum)
+		}
 		fmt.Println("更新证书完成")
 	}
 
-	return err
+	return nil
 }
 
 // 更新证书文件
@@ -574,8 +843,8 @@ func updateCertificateFiles(cert db.Certificate) error {
 		return fmt.Errorf("更新域名 %s 的公钥文件失败: %v\n", cert.Domain, err)
 	}
 
-	// 更新私钥文件
-	err = os.WriteFile(cert.KeyPath, []byte(cert.PrivateKey), 0644)
+	// 更新私钥文件（私钥权限收紧为 0600，避免同机其他用户可读）
+	err = os.WriteFile(cert.KeyPath, []byte(cert.PrivateKey), 0600)
 	if err != nil {
 		return fmt.Errorf("更新域名 %s 的私钥文件失败: %v\n", cert.Domain, err)
 	}
@@ -587,42 +856,46 @@ func updateCertificateFiles(cert db.Certificate) error {
 // 执行重载命令
 func executeRestartCmd() error {
 	// 获取重载命令
-	restartCmd, err := config.GetConfig("", "restart_cmd")
-	if err != nil {
-		if err.Error() == "Key not found" {
-			return fmt.Errorf("重载命令不存在，请先配置")
-		}
-		return fmt.Errorf("获取重载命令失败: %s", err)
+	restartCmd, _ := config.GetConfig("", "restart_cmd")
+	if strings.TrimSpace(restartCmd) == "" {
+		return fmt.Errorf("重载命令不存在，请先配置")
 	}
 
-	// 分割命令和参数
-	cmdParts := strings.Fields(restartCmd)
-	if len(cmdParts) == 0 {
-		return fmt.Errorf("重载命令为空")
+	// 限制执行超时（默认60秒），避免重载命令挂死
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// 通过系统 shell 执行，支持引号、管道、$() 等语法（如 docker restart $(docker ps -aqf "name=openresty")）
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", restartCmd)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", restartCmd)
 	}
 
-	// 执行命令
-	cmd := exec.Command(cmdParts[0], cmdParts[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("执行重载命令失败: %v\n%s\n", err, output)
 	}
 
 	color.Green("执行重载命令成功: %s\n", output)
-	return err
+	return nil
 }
 
 // 查找Nginx配置目录
 func findNginxPathCmd() (err error) {
 
 	reader := bufio.NewReader(os.Stdin)
-	// 输入自定义Nginx配置文件路径
-	fmt.Printf("请输入 Nginx 配置文件路径(如: /etc/nginx/nginx.conf, 多个路径用空格分隔，支持通配*.conf ): \n")
-	nginxPath, _ := reader.ReadString('\n')
-	nginxPath = strings.TrimSpace(nginxPath)
+	// 输入自定义Nginx配置文件路径，每行一个，避免 Windows 路径含空格被拆分
+	fmt.Println("请输入 Nginx 配置文件路径，每行一个，支持通配*.conf，输入完成后请直接回车(空行)结束:")
 	var nginxPaths []string
-	if nginxPath != "" {
-		nginxPaths = strings.Split(nginxPath, " ")
+	for {
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" {
+			break
+		}
+		nginxPaths = append(nginxPaths, line)
 	}
 	if len(nginxPaths) > 0 {
 		// 寻找 Nginx 配置文件
@@ -678,11 +951,24 @@ func cronTask(force bool) {
 			fmt.Println("open log file failed, err:", err)
 			return
 		}
-		// 保存原始标准输出
+		defer logFile.Close()
+
+		// 保存原始标准输出，任务结束（含出错）后恢复，避免污染全局输出
 		oldStdout := os.Stdout
-		// 将标准输出重定向到文件
+		oldColorOutput := color.Output
+		oldLogOutput := log.Writer()
+		oldLogFlags := log.Flags()
+		oldLogPrefix := log.Prefix()
 		os.Stdout = logFile
 		color.Output = logFile
+		defer func() {
+			os.Stdout = oldStdout
+			color.Output = oldColorOutput
+			log.SetOutput(oldLogOutput)
+			log.SetFlags(oldLogFlags)
+			log.SetPrefix(oldLogPrefix)
+		}()
+
 		log.SetOutput(logFile)
 		log.SetFlags(log.Llongfile | log.Lmicroseconds | log.Ldate)
 		log.Println("任务开始执行")
@@ -697,11 +983,9 @@ func cronTask(force bool) {
 
 		err = updateCertificates()
 		if err != nil {
-			log.Println(fmt.Sprintf("任务执行失败: %s", err))
+			log.Printf("任务执行完成，但存在错误: %s", err)
 			return
 		}
-		// 恢复标准输出
-		os.Stdout = oldStdout
 	})
 	if err != nil {
 		color.Red("添加任务调度失败: %s", err)
@@ -744,21 +1028,27 @@ func modifyKey() {
 		fmt.Print("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ")
 		thirdC, _ := reader.ReadString('\n')
 		thirdC = strings.TrimSpace(thirdC)
-		var thirdCs []string
-		if thirdC != "" {
-			thirdCs = strings.Split(thirdC, " ")
+		if thirdC == "" {
+			return
 		}
+		thirdCs := strings.Split(thirdC, " ")
+		valid := false
 		for _, t := range thirdCs {
 			if t != "certd" && t != "west" {
 				color.Red("平台错误，目前支持certd、west，多个平台用空格分隔")
 				continue
-			} else if t == "certd" {
+			}
+			valid = true
+			if t == "certd" {
 				certd.SetConfig()
 			} else if t == "west" {
 				west.SetConfig()
 			}
 		}
-		break
+		// 存在有效平台配置则退出，否则重新输入
+		if valid {
+			return
+		}
 	}
 }
 
@@ -777,14 +1067,47 @@ func checkInit() bool {
 
 // 检查证书是否已经存在（通过域名）
 func checkHasDomain(domain string) bool {
-	certInfo, _ := db.GetCertificateWrapper(domain)
+	certInfo, err := db.GetCertificateWrapper(domain)
+	if err != nil {
+		if !errors.Is(err, db.ErrNotFound) {
+			color.Yellow("检查域名 %s 是否存在时出错: %v\n", domain, err)
+		}
+		return false
+	}
 	return certInfo.Domain != ""
+}
+
+// containsString 判断字符串切片是否包含指定元素
+func containsString(list []string, target string) bool {
+	for _, s := range list {
+		if s == target {
+			return true
+		}
+	}
+	return false
+}
+
+// getCertFileExpireTime 读取证书文件的过期时间（秒时间戳）
+func getCertFileExpireTime(path string) (int64, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	endCert, err := utils.ParseCertificate(content)
+	if err != nil {
+		return 0, err
+	}
+	return endCert.NotAfter.UTC().Unix(), nil
 }
 
 // 初始化引导
 func initGuide(isEnd bool) {
 	if !checkInit() {
 		if !isEnd {
+			if !isInteractive() {
+				color.Red("程序未初始化，且当前环境不支持交互输入，请先手动执行 init 命令完成初始化")
+				os.Exit(1)
+			}
 			color.Yellow("程序未初始化，现在开始初始化流程")
 			initConfig()
 		} else {
@@ -792,4 +1115,13 @@ func initGuide(isEnd bool) {
 			os.Exit(0)
 		}
 	}
+}
+
+// isInteractive 判断标准输入是否为交互终端（用于避免非交互环境下读取输入挂死）
+func isInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
