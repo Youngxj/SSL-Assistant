@@ -20,6 +20,7 @@ import (
 	"ssl_assistant/utils"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -119,11 +120,66 @@ type nginxSite struct {
 	KeyPath  string   // ssl_certificate_key 路径
 }
 
+// discoverPanelPaths 智能探测小皮面板（phpstudy）的 Nginx/Apache 站点配置目录。
+// phpstudy 安装目录与 Nginx 版本号不确定（如 D:\phpstudy_pro\Extensions\Nginx1.15.11\conf\vhosts），
+// 通过枚举盘符 + 遍历 Extensions 下 Nginx*/Apache* 目录动态定位；找不到时返回空，不影响原有扫描。
+// 结果进程内缓存一次（phpstudy 安装/卸载后需重启程序重新识别）。
+var (
+	panelPathsOnce sync.Once
+	panelPaths     []string
+)
+
+func discoverPanelPaths() []string {
+	panelPathsOnce.Do(func() {
+		if runtime.GOOS != "windows" {
+			return
+		}
+		// 枚举存在的盘符（覆盖 C/D/E 及网络盘、U 盘等自定义安装位置）
+		for c := 'A'; c <= 'Z'; c++ {
+			drive := string(c) + ":\\"
+			if _, err := os.Stat(drive); err != nil {
+				continue
+			}
+			panelPaths = append(panelPaths, discoverPhpstudyFromRoot(filepath.Join(drive, "phpstudy_pro"))...)
+		}
+	})
+	return panelPaths
+}
+
+// discoverPhpstudyFromRoot 给定 phpstudy 根目录，返回其 Nginx/Apache 的 vhosts 通配路径（版本号无关）
+func discoverPhpstudyFromRoot(root string) []string {
+	var paths []string
+	extDir := filepath.Join(root, "Extensions")
+	entries, err := os.ReadDir(extDir)
+	if err != nil {
+		return paths
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Nginx 或 Apache 开头（版本号可变），如 Nginx1.15.11、Apache2.4.39
+		if !strings.HasPrefix(name, "Nginx") && !strings.HasPrefix(name, "Apache") {
+			continue
+		}
+		vhosts := filepath.Join(extDir, name, "conf", "vhosts")
+		if info, err := os.Stat(vhosts); err == nil && info.IsDir() {
+			paths = append(paths, filepath.Join(vhosts, "*.conf"))
+		}
+	}
+	return paths
+}
+
 // findNginxConfigs 寻找 Nginx 配置文件，聚合返回解析出的站点（按主域名去重，不立即添加）
+// paths 为空时使用默认路径并自动探测面板（小皮 phpstudy）站点目录
 func findNginxConfigs(paths []string) []nginxSite {
 	color.Cyan("正在寻找 Nginx 配置文件...")
 	var sites []nginxSite
 	seen := make(map[string]bool)
+
+	// 智能探测面板（小皮 phpstudy）站点目录并合并
+	paths = append(paths, discoverPanelPaths()...)
 
 	for _, path := range paths {
 		fmt.Println("正在检索目录: ", path)
@@ -626,9 +682,10 @@ func addCertificate() error {
 	return err
 }
 
-// findNginxCertPaths 从默认 Nginx 配置路径（宝塔/1Panel/原生 Nginx）中查找指定域名的证书路径
+// findNginxCertPaths 从默认配置路径（宝塔/1Panel/原生 Nginx、面板自动探测）中查找指定域名的证书路径
 func findNginxCertPaths(domain string) (certPath, keyPath string, found bool) {
-	for _, path := range defaultNginxPaths {
+	paths := append(defaultNginxPaths, discoverPanelPaths()...)
+	for _, path := range paths {
 		if strings.Contains(path, "*") {
 			matches, err := filepath.Glob(path)
 			if err != nil {
