@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -49,35 +48,19 @@ func initConfig() {
 			color.Red("%s", err)
 			return
 		}
-		fmt.Print("程序已经初始化，是否重新初始化？(y/n): ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if input != "y" && input != "Y" {
+		if !utils.Confirm("程序已经初始化，是否重新初始化") {
 			return
 		}
 	}
-
-	reader := bufio.NewReader(os.Stdin)
 
 	// 设置平台密钥
 	modifyKey()
 
 	// 输入重载命令
-	fmt.Printf("请输入重载命令(如: %s): ", defaultReloadCmd)
-	restartCmd, _ := reader.ReadString('\n')
-	restartCmd = strings.TrimSpace(restartCmd)
-	if restartCmd == "" {
-		restartCmd = defaultReloadCmd
-	}
+	restartCmd := utils.ReadInput(fmt.Sprintf("请输入重载命令(如: %s): ", defaultReloadCmd), defaultReloadCmd)
 
 	// 输入提前更新天数
-	fmt.Printf("请输入证书提前更新天数(默认: %d天): ", defaultBeforeExpirationDay)
-	ExpirationDay, _ := reader.ReadString('\n')
-	ExpirationDay = strings.TrimSpace(ExpirationDay)
-	if ExpirationDay == "" {
-		ExpirationDay = strconv.Itoa(int(defaultBeforeExpirationDay))
-	}
+	ExpirationDay := utils.ReadInput(fmt.Sprintf("请输入证书提前更新天数(默认: %d天): ", defaultBeforeExpirationDay), strconv.Itoa(int(defaultBeforeExpirationDay)))
 
 	err := config.SetConfig("", "restart_cmd", restartCmd)
 	if err != nil {
@@ -379,10 +362,7 @@ func getCertificateInfo(domain string, certSource string, certID int) (db.Certif
 func addCertificate() error {
 	initGuide(false)
 	// 输入域名
-	fmt.Print("请输入域名: ")
-	reader := bufio.NewReader(os.Stdin)
-	domain, _ := reader.ReadString('\n')
-	domain = strings.TrimSpace(domain)
+	domain := utils.ReadInput("请输入域名: ", "")
 
 	// 获取证书信息
 	cert, err := getCertificateInfo(domain, "", 0)
@@ -398,10 +378,7 @@ func addCertificate() error {
 	certPath, keyPath, found := findNginxCertPaths(domain)
 	if found {
 		fmt.Printf("已自动从 Nginx 配置找到证书路径:\n  证书: %s\n  私钥: %s\n", certPath, keyPath)
-		fmt.Print("是否使用自动匹配的路径？(y/n): ")
-		useAuto, _ := reader.ReadString('\n')
-		useAuto = strings.TrimSpace(useAuto)
-		if useAuto == "y" || useAuto == "Y" {
+		if utils.Confirm("是否使用自动匹配的路径") {
 			cert.CertPath = certPath
 			cert.KeyPath = keyPath
 		} else {
@@ -409,17 +386,8 @@ func addCertificate() error {
 		}
 	}
 	if !found {
-		// 输入证书路径
-		fmt.Print("请输入证书存放路径（需包含文件名）: ")
-		certPath, _ := reader.ReadString('\n')
-		certPath = strings.TrimSpace(certPath)
-		cert.CertPath = certPath
-
-		// 输入私钥路径
-		fmt.Print("请输入私钥存放路径（需包含文件名）: ")
-		keyPath, _ := reader.ReadString('\n')
-		keyPath = strings.TrimSpace(keyPath)
-		cert.KeyPath = keyPath
+		cert.CertPath = utils.ReadInput("请输入证书存放路径（需包含文件名）: ", "")
+		cert.KeyPath = utils.ReadInput("请输入私钥存放路径（需包含文件名）: ", "")
 	}
 
 	// 保存证书信息
@@ -496,10 +464,7 @@ func extractCertPathsFromFile(path, domain string) (string, string, bool) {
 func deleteCertificate() error {
 	initGuide(false)
 	// 输入证书 ID
-	fmt.Print("请输入证书 ID: ")
-	reader := bufio.NewReader(os.Stdin)
-	idStr, _ := reader.ReadString('\n')
-	idStr = strings.TrimSpace(idStr)
+	idStr := utils.ReadInput("请输入证书 ID: ", "")
 
 	// 转换为整数
 	id, err := strconv.Atoi(idStr)
@@ -611,78 +576,70 @@ func getCertificates() {
 // 查看证书
 func showCertificates() error {
 	initGuide(false)
-	// 处理用户输入
-	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
 		getCertificates()
 		fmt.Println("请输入操作：1=添加、2=删除、3=修改密钥、4=修改重载命令、5=更新证书、6=修改提前更新天数、7=快速添加域名（Nginx目录检索）、8=查看任务、9=查看配置信息、0=退出")
-		fmt.Print(">>> ")
-		if scanner.Scan() {
-			input := scanner.Text()
-			switch input {
-			case "0": // 退出
-				fmt.Println("程序退出")
-				os.Exit(0)
-			case "1": // 添加证书
-				err := addCertificate()
-				if err != nil {
-					return err
-				}
-				continue
-			case "2": // 删除证书
-				err := deleteCertificate()
-				if err != nil {
-					return err
-				}
-				continue
-			case "3":
-				modifyKey()
-				continue
-			case "4": // 修改重载命令
-				err := modifyRestartCmd()
-				if err != nil {
-					return err
-				}
-				continue
-			case "5": // 更新证书
-				err := updateCertificates()
-				if err != nil {
-					return err
-				}
-				continue
-			case "6": // 更新到期检查时间
-				err := modifyExpirationDay()
-				if err != nil {
-					return err
-				}
-				continue
-			case "7": // 快速添加域名
-				err := findNginxPathCmd()
-				if err != nil {
-					return err
-				}
-				continue
-			case "8": // 查看任务
-				cPid := checkTask()
-				if cPid == "" {
-					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
-				} else {
-					color.Green("当前任务PID: %s", cPid)
-				}
-				continue
-			case "9": // 获取配置（测试）
-				err := getConfigInfo()
-				if err != nil {
-					return err
-				}
-			default:
-				fmt.Println("无效的输入，请重新输入")
-				continue
-			}
-		} else {
+		input := utils.ReadInput(">>> ", "")
+		switch input {
+		case "0": // 退出
 			fmt.Println("程序退出")
 			os.Exit(0)
+		case "1": // 添加证书
+			err := addCertificate()
+			if err != nil {
+				return err
+			}
+			continue
+		case "2": // 删除证书
+			err := deleteCertificate()
+			if err != nil {
+				return err
+			}
+			continue
+		case "3":
+			modifyKey()
+			continue
+		case "4": // 修改重载命令
+			err := modifyRestartCmd()
+			if err != nil {
+				return err
+			}
+			continue
+		case "5": // 更新证书
+			err := updateCertificates()
+			if err != nil {
+				return err
+			}
+			continue
+		case "6": // 更新到期检查时间
+			err := modifyExpirationDay()
+			if err != nil {
+				return err
+			}
+			continue
+		case "7": // 快速添加域名
+			err := findNginxPathCmd()
+			if err != nil {
+				return err
+			}
+			continue
+		case "8": // 查看任务
+			cPid := checkTask()
+			if cPid == "" {
+				color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
+			} else {
+				color.Green("当前任务PID: %s", cPid)
+			}
+			continue
+		case "9": // 获取配置（测试）
+			err := getConfigInfo()
+			if err != nil {
+				return err
+			}
+		default:
+			fmt.Println("无效的输入，请重新输入")
+			continue
 		}
 		fmt.Println()
 	}
@@ -692,20 +649,12 @@ func showCertificates() error {
 func modifyRestartCmd() error {
 	restartCmd, _ := config.GetConfig("", "restart_cmd")
 	fmt.Printf("当前重载命令: %s\n", color.CyanString(restartCmd))
-	fmt.Printf("请输入新的重载命令(如: %s): ", defaultReloadCmd)
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		newCmd := scanner.Text()
-		if newCmd == "" {
-			newCmd = defaultReloadCmd
-		}
-		err := config.SetConfig("", "restart_cmd", newCmd)
-		if err != nil {
-			return fmt.Errorf("保存重载命令失败: %s", err)
-		} else {
-			color.Green("保存重载命令成功")
-		}
+	newCmd := utils.ReadInput(fmt.Sprintf("请输入新的重载命令(如: %s): ", defaultReloadCmd), defaultReloadCmd)
+	err := config.SetConfig("", "restart_cmd", newCmd)
+	if err != nil {
+		return fmt.Errorf("保存重载命令失败: %s", err)
 	}
+	color.Green("保存重载命令成功")
 	return nil
 }
 
@@ -713,20 +662,16 @@ func modifyRestartCmd() error {
 func modifyExpirationDay() error {
 	ExpirationDay, _ := config.GetConfig("", "before_expiration_day")
 	fmt.Printf("当前过期前天数: %s\n", color.CyanString(ExpirationDay))
-	fmt.Printf("请输入新的过期前天数(如: %d): ", defaultBeforeExpirationDay)
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		newDay, _ := strconv.Atoi(scanner.Text())
-		if newDay == 0 {
-			newDay = int(defaultBeforeExpirationDay)
-		}
-		err := config.SetConfig("", "before_expiration_day", strconv.Itoa(newDay))
-		if err != nil {
-			return fmt.Errorf("保存过期前天数失败: %s", err)
-		} else {
-			color.Green("过期前天数已修改成: %s", color.CyanString(strconv.Itoa(newDay)))
-		}
+	newDay, err := strconv.Atoi(utils.ReadInput(fmt.Sprintf("请输入新的过期前天数(如: %d): ", defaultBeforeExpirationDay), strconv.Itoa(int(defaultBeforeExpirationDay))))
+	if err != nil || newDay <= 0 {
+		// 非法输入或 0 天时回退默认值，与旧逻辑保持一致
+		newDay = int(defaultBeforeExpirationDay)
 	}
+	err = config.SetConfig("", "before_expiration_day", strconv.Itoa(newDay))
+	if err != nil {
+		return fmt.Errorf("保存过期前天数失败: %s", err)
+	}
+	color.Green("过期前天数已修改成: %s", color.CyanString(strconv.Itoa(newDay)))
 	return nil
 }
 
@@ -885,13 +830,15 @@ func executeRestartCmd() error {
 // 查找Nginx配置目录
 func findNginxPathCmd() (err error) {
 
-	reader := bufio.NewReader(os.Stdin)
-	// 输入自定义Nginx配置文件路径，每行一个，避免 Windows 路径含空格被拆分
-	fmt.Println("请输入 Nginx 配置文件路径，每行一个，支持通配*.conf，输入完成后请直接回车(空行)结束:")
+	// 输入自定义Nginx配置文件路径，每行一个，避免 Windows 路径含空格被拆分；示例按平台显示
+	nginxExample := "/etc/nginx/nginx.conf"
+	if runtime.GOOS == "windows" {
+		nginxExample = `C:\nginx\conf\nginx.conf`
+	}
+	fmt.Printf("请输入 Nginx 配置文件路径，每行一个，支持通配*.conf，输入完成后请直接回车(空行)结束（示例: %s）:\n", nginxExample)
 	var nginxPaths []string
 	for {
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
+		line := utils.ReadInput("", "")
 		if line == "" {
 			break
 		}
@@ -1022,12 +969,8 @@ func getConfigInfo() error {
 
 // 修改密钥
 func modifyKey() {
-	reader := bufio.NewReader(os.Stdin)
-
 	for {
-		fmt.Print("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ")
-		thirdC, _ := reader.ReadString('\n')
-		thirdC = strings.TrimSpace(thirdC)
+		thirdC := utils.ReadInput("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ", "")
 		if thirdC == "" {
 			return
 		}
@@ -1104,8 +1047,9 @@ func getCertFileExpireTime(path string) (int64, error) {
 func initGuide(isEnd bool) {
 	if !checkInit() {
 		if !isEnd {
-			if !isInteractive() {
+			if !utils.IsInteractive() {
 				color.Red("程序未初始化，且当前环境不支持交互输入，请先手动执行 init 命令完成初始化")
+				color.Yellow("提示: 如确认当前处于交互终端（如 git-bash），可设置环境变量 SSL_ASSISTANT_INTERACTIVE=1 强制进入交互模式\n")
 				os.Exit(1)
 			}
 			color.Yellow("程序未初始化，现在开始初始化流程")
@@ -1115,13 +1059,4 @@ func initGuide(isEnd bool) {
 			os.Exit(0)
 		}
 	}
-}
-
-// isInteractive 判断标准输入是否为交互终端（用于避免非交互环境下读取输入挂死）
-func isInteractive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
