@@ -3,8 +3,10 @@ package utils
 import (
 	"bufio"
 	"fmt"
+	"github.com/fatih/color"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -46,6 +48,54 @@ func ReadInput(prompt, def string) string {
 		return def
 	}
 	return input
+}
+
+// MultiSelectCheckbox 多选勾选列表（回车勾选交互）。
+// 循环展示 [ ]/[x] 列表；输入序号（空格分隔可一次切换多个）后回车切换勾选状态，
+// 直接回车确认选择，返回已勾选项的下标（与 items 顺序一致）。
+// items 为空时直接返回空切片。
+func MultiSelectCheckbox(items []string, prompt string) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	if prompt == "" {
+		prompt = "输入序号切换勾选（多个用空格分隔，直接回车确认）: "
+	}
+	selected := make([]bool, len(items))
+	for {
+		fmt.Println()
+		for i, item := range items {
+			mark := " "
+			if selected[i] {
+				mark = "x"
+			}
+			fmt.Printf("[%s] %d. %s\n", mark, i+1, item)
+		}
+		input := ReadInput(prompt, "")
+		if input == "" {
+			break
+		}
+		valid := false
+		for _, f := range strings.Fields(input) {
+			n, err := strconv.Atoi(f)
+			if err != nil || n < 1 || n > len(items) {
+				color.Yellow("无效序号: %s（范围 1-%d）\n", f, len(items))
+				continue
+			}
+			valid = true
+			selected[n-1] = !selected[n-1]
+		}
+		if !valid {
+			color.Yellow("请输入 1-%d 之间的序号\n", len(items))
+		}
+	}
+	var result []int
+	for i, s := range selected {
+		if s {
+			result = append(result, i)
+		}
+	}
+	return result
 }
 
 // Confirm 打印 y/n 确认提示，返回是否确认（y/yes 视为确认，其他视为否）。

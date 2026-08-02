@@ -82,12 +82,14 @@ func initConfig() {
 
 	color.Green("初始化成功")
 
-	// 寻找 Nginx 配置文件，返回找到的证书配置数量（获取失败/重复也算已找到，避免误导）
-	found := findNginxConfigs(defaultNginxPaths)
+	// 寻找 Nginx 配置文件，聚合返回站点列表（按主域名去重）
+	sites := findNginxConfigs(defaultNginxPaths)
 
 	// 默认路径已找到证书配置则不再询问自定义路径（issue #3：避免用户困惑于"必须输入路径"）
-	if found > 0 {
-		color.Green("已自动检索到 %d 个证书配置，无需再配置自定义路径\n", found)
+	if len(sites) > 0 {
+		color.Green("已自动检索到 %d 个证书配置，无需再配置自定义路径\n", len(sites))
+		// 列出所有检索到的域名，回车勾选后自动添加
+		selectAndAddNginxSites(sites)
 	} else {
 		color.Yellow("默认路径未检索到证书配置，可自定义配置文件路径（直接回车跳过）")
 		// 输入自定义Nginx配置文件路径
@@ -105,13 +107,23 @@ func initConfig() {
 	}
 }
 
-// 寻找 Nginx 配置文件，返回找到的证书配置数量
-func findNginxConfigs(paths []string) int {
+// nginxSite 表示从 Nginx 配置解析出的一个站点（server 块）
+type nginxSite struct {
+	Domain   string   // 主域名（server_name 第一个）
+	Domains  []string // server_name 全部域名（SAN 覆盖校验用）
+	CertPath string   // ssl_certificate 路径
+	KeyPath  string   // ssl_certificate_key 路径
+}
+
+// findNginxConfigs 寻找 Nginx 配置文件，聚合返回解析出的站点（按主域名去重，不立即添加）
+func findNginxConfigs(paths []string) []nginxSite {
 	color.Cyan("正在寻找 Nginx 配置文件...")
-	found := 0
+	var sites []nginxSite
+	seen := make(map[string]bool)
 
 	for _, path := range paths {
 		fmt.Println("正在检索目录: ", path)
+		var found []nginxSite
 		// 如果路径包含通配符，则使用 Glob 函数
 		if strings.Contains(path, "*") {
 			matches, err := filepath.Glob(path)
@@ -120,16 +132,24 @@ func findNginxConfigs(paths []string) int {
 			}
 
 			for _, match := range matches {
-				found += parseNginxConfig(match)
+				found = append(found, parseNginxConfig(match)...)
 			}
 		} else {
 			// 否则直接检查文件是否存在
 			if _, err := os.Stat(path); err == nil {
-				found += parseNginxConfig(path)
+				found = append(found, parseNginxConfig(path)...)
 			}
 		}
+		// 同一域名可能出现在多个配置文件，去重
+		for _, s := range found {
+			if s.Domain == "" || seen[s.Domain] {
+				continue
+			}
+			seen[s.Domain] = true
+			sites = append(sites, s)
+		}
 	}
-	return found
+	return sites
 }
 
 // serverBlockStartRegex 匹配 server 块起始（server 后跟空白与左花括号，不会误匹配 server_name）
@@ -171,15 +191,15 @@ func findServerBlocks(content string) []string {
 	return blocks
 }
 
-// 解析 Nginx 配置文件，返回匹配到证书配置的 server 块数量
-func parseNginxConfig(path string) int {
+// 解析 Nginx 配置文件，返回含证书配置的站点列表（仅收集，不添加；添加由用户勾选后执行）
+func parseNginxConfig(path string) []nginxSite {
 	fmt.Println("解析配置文件:", path)
 
 	// 读取配置文件
 	content, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Println("读取配置文件失败:", err)
-		return 0
+		return nil
 	}
 
 	// 按 server 块为单位解析，避免多个 server 块之间字段错位（支持嵌套块）
@@ -193,15 +213,14 @@ func parseNginxConfig(path string) int {
 		blocks = []string{string(content)}
 	}
 
-	matched := 0
+	var sites []nginxSite
 	for _, block := range blocks {
 		serverNameMatch := serverNameRegex.FindStringSubmatch(block)
 		sslCertMatch := sslCertRegex.FindStringSubmatch(block)
 		sslKeyMatch := sslKeyRegex.FindStringSubmatch(block)
 
-		// 如果找到了 server_name 和 ssl_certificate，则添加证书
+		// 如果找到了 server_name 和 ssl_certificate，则收集该站点
 		if len(serverNameMatch) > 0 && len(sslCertMatch) > 0 && len(sslKeyMatch) > 0 {
-			matched++
 			serverName := strings.TrimSpace(serverNameMatch[1])
 			sslCert := strings.TrimSpace(sslCertMatch[1])
 			sslKey := strings.TrimSpace(sslKeyMatch[1])
@@ -209,49 +228,93 @@ func parseNginxConfig(path string) int {
 			// 分割 server_name，可能有多个域名
 			domains := strings.Fields(serverName)
 			if len(domains) > 0 {
-				domain := domains[0]
-				color.Cyan("找到域名: %s, 证书: %s, 私钥: %s\n", domain, sslCert, sslKey)
-
-				if checkHasDomain(domain) {
-					color.Yellow("域名 %s 的证书信息已存在，无需重复添加\n", domain)
-					continue
-				}
-
-				// 获取证书信息
-				cert, err := getCertificateInfo(domain, "", 0)
-				if err != nil {
-					fmt.Printf("获取域名 %s 的证书信息失败: %v\n", domain, err)
-					continue
-				}
-				// SAN 校验：server_name 中的其他域名是否在证书覆盖范围内
-				if cert.CertDomains != "" {
-					covered := strings.Split(cert.CertDomains, ",")
-					var missing []string
-					for _, d := range domains {
-						if !containsString(covered, d) {
-							missing = append(missing, d)
-						}
-					}
-					if len(missing) > 0 {
-						color.Yellow("警告: 域名 %s 不在证书覆盖范围内（证书仅覆盖: %s）\n", strings.Join(missing, ","), cert.CertDomains)
-					}
-				}
-				// 设置证书路径
-				cert.CertPath = sslCert
-				cert.KeyPath = sslKey
-
-				// 保存证书信息
-				err = db.AddCertificateToDBWrapper(cert)
-				if err != nil {
-					fmt.Printf("保存域名 %s 的证书信息失败: %v\n", domain, err)
-					continue
-				}
-
-				color.Green("域名 %s 的证书信息已保存\n", domain)
+				sites = append(sites, nginxSite{
+					Domain:   domains[0],
+					Domains:  domains,
+					CertPath: sslCert,
+					KeyPath:  sslKey,
+				})
 			}
 		}
 	}
-	return matched
+	return sites
+}
+
+// addSiteFromNginx 将一个从 Nginx 配置解析出的站点添加为证书（查重 → 拉取证书 → SAN 校验 → 保存）
+func addSiteFromNginx(site nginxSite) {
+	domain := site.Domain
+	color.Cyan("添加域名: %s, 证书: %s, 私钥: %s\n", domain, site.CertPath, site.KeyPath)
+
+	if checkHasDomain(domain) {
+		color.Yellow("域名 %s 的证书信息已存在，无需重复添加\n", domain)
+		return
+	}
+
+	// 获取证书信息（第三方平台 API 请求，可能需要几秒到几十秒）
+	color.Cyan("正在从证书平台获取 %s 的证书信息...\n", domain)
+	cert, err := getCertificateInfo(domain, "", 0)
+	if err != nil {
+		fmt.Printf("获取域名 %s 的证书信息失败: %v\n", domain, err)
+		return
+	}
+	// SAN 校验：server_name 中的其他域名是否在证书覆盖范围内
+	if cert.CertDomains != "" {
+		covered := strings.Split(cert.CertDomains, ",")
+		var missing []string
+		for _, d := range site.Domains {
+			if !containsString(covered, d) {
+				missing = append(missing, d)
+			}
+		}
+		if len(missing) > 0 {
+			color.Yellow("警告: 域名 %s 不在证书覆盖范围内（证书仅覆盖: %s）\n", strings.Join(missing, ","), cert.CertDomains)
+		}
+	}
+	// 设置证书路径
+	cert.CertPath = site.CertPath
+	cert.KeyPath = site.KeyPath
+
+	// 保存证书信息
+	err = db.AddCertificateToDBWrapper(cert)
+	if err != nil {
+		fmt.Printf("保存域名 %s 的证书信息失败: %v\n", domain, err)
+		return
+	}
+	color.Green("域名 %s 的证书信息已保存\n", domain)
+}
+
+// selectAndAddNginxSites 展示检索到的站点域名，让用户回车勾选后批量添加。
+// 非交互环境下自动全选（保持"自动添加"的原有行为，避免 EOF 退出）。
+func selectAndAddNginxSites(sites []nginxSite) {
+	if len(sites) == 0 {
+		color.Yellow("未检索到证书配置\n")
+		return
+	}
+	items := make([]string, len(sites))
+	for i, s := range sites {
+		items[i] = s.Domain
+	}
+	var selected []int
+	if utils.IsInteractive() {
+		color.Cyan("检索到 %d 个站点，请勾选要添加的域名：\n", len(sites))
+		selected = utils.MultiSelectCheckbox(items, "")
+	} else {
+		// 非交互（如脚本/SSH 管道）：自动全选
+		color.Cyan("检索到 %d 个站点，非交互环境下自动添加全部\n", len(sites))
+		for i := range items {
+			selected = append(selected, i)
+		}
+	}
+	if len(selected) == 0 {
+		color.Yellow("未选择任何域名，已跳过添加\n")
+		return
+	}
+	color.Green("开始添加 %d 个域名...\n", len(selected))
+	for i, idx := range selected {
+		fmt.Printf("\n[%d/%d] ", i+1, len(selected))
+		addSiteFromNginx(sites[idx])
+	}
+	color.Green("\n全部 %d 个域名添加完成\n", len(selected))
 }
 
 // 获取证书信息 certd/west
@@ -360,7 +423,9 @@ func getCertificateInfo(domain string, certSource string, certID int) (db.Certif
 
 // 添加证书
 func addCertificate() error {
-	initGuide(false)
+	if err := initGuide(false); err != nil {
+		return err
+	}
 	// 输入域名
 	domain := utils.ReadInput("请输入域名: ", "")
 
@@ -462,7 +527,9 @@ func extractCertPathsFromFile(path, domain string) (string, string, bool) {
 
 // 删除证书
 func deleteCertificate() error {
-	initGuide(false)
+	if err := initGuide(false); err != nil {
+		return err
+	}
 	// 输入证书 ID
 	idStr := utils.ReadInput("请输入证书 ID: ", "")
 
@@ -575,7 +642,9 @@ func getCertificates() {
 
 // 查看证书
 func showCertificates() error {
-	initGuide(false)
+	if err := initGuide(false); err != nil {
+		return err
+	}
 
 	for {
 		getCertificates()
@@ -677,7 +746,9 @@ func modifyExpirationDay() error {
 
 // 更新证书
 func updateCertificates() error {
-	initGuide(false)
+	if err := initGuide(false); err != nil {
+		return err
+	}
 	// 获取所有证书
 	certificates, err := db.GetAllCertificatesWrapper()
 	if err != nil {
@@ -843,11 +914,14 @@ func findNginxPathCmd() (err error) {
 			break
 		}
 		nginxPaths = append(nginxPaths, line)
+		color.Cyan("已添加路径: %s（继续输入下一行，或直接回车结束输入）\n", line)
 	}
 	if len(nginxPaths) > 0 {
 		// 寻找 Nginx 配置文件
-		findNginxConfigs(nginxPaths)
+		sites := findNginxConfigs(nginxPaths)
 		color.Green("Nginx配置文件查找完成")
+		// 列出检索到的域名，回车勾选后自动添加
+		selectAndAddNginxSites(sites)
 	} else {
 		color.Yellow("目录为空，已跳过")
 	}
@@ -1043,20 +1117,21 @@ func getCertFileExpireTime(path string) (int64, error) {
 	return endCert.NotAfter.UTC().Unix(), nil
 }
 
-// 初始化引导
-func initGuide(isEnd bool) {
+// 初始化引导：未初始化时触发初始化或返回错误。
+// 返回 error（而非 os.Exit）以便调用方决定退出还是返回交互菜单，避免双击菜单场景下整个程序被直接终止（闪退）。
+func initGuide(isEnd bool) error {
 	if !checkInit() {
 		if !isEnd {
 			if !utils.IsInteractive() {
 				color.Red("程序未初始化，且当前环境不支持交互输入，请先手动执行 init 命令完成初始化")
 				color.Yellow("提示: 如确认当前处于交互终端（如 git-bash），可设置环境变量 SSL_ASSISTANT_INTERACTIVE=1 强制进入交互模式\n")
-				os.Exit(1)
+				return fmt.Errorf("程序未初始化")
 			}
 			color.Yellow("程序未初始化，现在开始初始化流程")
 			initConfig()
 		} else {
-			color.Yellow("程序未初始化，请先初始化程序")
-			os.Exit(0)
+			return fmt.Errorf("程序未初始化，请先执行 init 命令完成初始化")
 		}
 	}
+	return nil
 }
