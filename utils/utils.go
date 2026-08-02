@@ -49,29 +49,6 @@ func MD5(str string) string {
 	return md5str
 }
 
-// TimeFormat 时间格式化
-//
-//	@param timeStr
-//	@param timeStrLayout
-func TimeFormat(timeStr string, timeStrLayout string) (time.Time, error) {
-	// 解析时间字符串为 time.Time 对象
-	t, err := time.Parse(timeStrLayout, timeStr)
-	if err != nil {
-		return time.Now(), fmt.Errorf("error parsing time:%s", err)
-	}
-
-	// 设置时区为 UTC
-	t = t.UTC()
-
-	// 转换为北京时间（UTC+8）
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		return time.Now(), fmt.Errorf("error loading location:%s", err)
-	}
-	t = t.In(loc)
-	return t, err
-}
-
 // ExistDir 检查目录是否存在，不存在则创建
 //
 //	@param path
@@ -97,17 +74,17 @@ func ArrayToString(arr []string, suffix string) string {
 }
 
 // ParseCertificate 解析证书
-func ParseCertificate(endCertBytes []byte) *x509.Certificate {
+func ParseCertificate(endCertBytes []byte) (*x509.Certificate, error) {
 	endBlocks, _ := pem.Decode(endCertBytes)
 	if endBlocks == nil {
-		panic("failed to parse certificate PEM")
+		return nil, fmt.Errorf("failed to parse certificate PEM")
 	}
 
 	endCert, err := x509.ParseCertificate(endBlocks.Bytes)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("解析证书失败: %v", err)
 	}
-	return endCert
+	return endCert, nil
 }
 
 // ShowCertificateInfo 打印证书信息
