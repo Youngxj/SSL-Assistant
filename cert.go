@@ -1320,7 +1320,8 @@ func updateCertificateFiles(cert db.Certificate) error {
 		return fmt.Errorf("更新域名 %s 的私钥文件失败: %v\n", cert.Domain, err)
 	}
 
-	fmt.Printf("域名 %s 的证书文件已更新\n", cert.Domain)
+	// 绿色高亮提示更新成功的域名，便于在批量更新中快速识别
+	color.Green("域名 %s 的证书文件已更新\n", cert.Domain)
 	return err
 }
 
