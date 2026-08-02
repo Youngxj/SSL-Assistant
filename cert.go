@@ -247,7 +247,44 @@ func parseNginxConfig(path string) []nginxSite {
 	return sites
 }
 
-// addSiteFromNginx 将一个从 Nginx 配置解析出的站点添加为证书（查重 → 拉取证书 → SAN 校验 → 保存）
+// buildCertFromLocalFiles 从本地证书/私钥文件解析证书信息（平台未配置或拉取失败时回退使用）。
+// 返回的 CertSource 标记为 local，后续配置平台后 update 会自动探测 west/certd 正常更新。
+func buildCertFromLocalFiles(domain, certPath, keyPath string) (db.Certificate, error) {
+	var cert db.Certificate
+
+	crt, err := os.ReadFile(certPath)
+	if err != nil {
+		return cert, fmt.Errorf("读取本地证书文件失败: %v", err)
+	}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return cert, fmt.Errorf("读取本地私钥文件失败: %v", err)
+	}
+	endCert, err := utils.ParseCertificate(crt)
+	if err != nil {
+		return cert, fmt.Errorf("解析本地证书失败: %v", err)
+	}
+
+	cert.Domain = domain
+	cert.CreateTime = endCert.NotBefore.UTC().Unix()
+	cert.ExpireTime = endCert.NotAfter.UTC().Unix()
+	if cert.ExpireTime < time.Now().Unix() {
+		cert.Status = "过期"
+	} else {
+		cert.Status = "有效"
+	}
+	cert.PublicKey = string(crt)
+	cert.PrivateKey = string(key)
+	cert.CertPath = certPath
+	cert.KeyPath = keyPath
+	cert.CertSource = "local"
+	if len(endCert.DNSNames) > 0 {
+		cert.CertDomains = strings.Join(endCert.DNSNames, ",")
+	}
+	return cert, nil
+}
+
+// addSiteFromNginx 将一个从 Nginx 配置解析出的站点添加为证书（查重 → 平台拉取或本地回退 → SAN 校验 → 保存）
 func addSiteFromNginx(site nginxSite) {
 	domain := site.Domain
 	color.Cyan("添加域名: %s, 证书: %s, 私钥: %s\n", domain, site.CertPath, site.KeyPath)
@@ -261,8 +298,13 @@ func addSiteFromNginx(site nginxSite) {
 	color.Cyan("正在从证书平台获取 %s 的证书信息...\n", domain)
 	cert, err := getCertificateInfo(domain, "", 0)
 	if err != nil {
-		fmt.Printf("获取域名 %s 的证书信息失败: %v\n", domain, err)
-		return
+		// 平台未配置或拉取失败：回退读取本地证书文件，保证已有证书也能被纳管
+		color.Yellow("平台获取失败（%v），尝试从本地证书文件读取...\n", err)
+		cert, err = buildCertFromLocalFiles(domain, site.CertPath, site.KeyPath)
+		if err != nil {
+			fmt.Printf("获取域名 %s 的证书信息失败: %v\n", domain, err)
+			return
+		}
 	}
 	// SAN 校验：server_name 中的其他域名是否在证书覆盖范围内
 	if cert.CertDomains != "" {
@@ -277,7 +319,7 @@ func addSiteFromNginx(site nginxSite) {
 			color.Yellow("警告: 域名 %s 不在证书覆盖范围内（证书仅覆盖: %s）\n", strings.Join(missing, ","), cert.CertDomains)
 		}
 	}
-	// 设置证书路径
+	// 设置证书路径（平台来源时覆盖为 Nginx 配置中的路径）
 	cert.CertPath = site.CertPath
 	cert.KeyPath = site.KeyPath
 
@@ -436,30 +478,37 @@ func addCertificate() error {
 	// 输入域名
 	domain := utils.ReadInput("请输入域名: ", "")
 
-	// 获取证书信息
+	// 获取证书信息（优先平台拉取；平台未配置/失败时回退读取本地证书文件，保证已有证书也能添加）
 	cert, err := getCertificateInfo(domain, "", 0)
 	if err != nil {
-		return fmt.Errorf("获取证书信息失败: %s", err)
+		color.Yellow("平台获取失败（%v），尝试从本地证书文件读取...\n", err)
+		certPath, keyPath, matched := findNginxCertPaths(domain)
+		if matched {
+			cert, err = buildCertFromLocalFiles(domain, certPath, keyPath)
+		}
+		if err != nil {
+			return fmt.Errorf("获取证书信息失败（平台未配置或本地证书不存在）: %s", err)
+		}
 	}
 
 	if checkHasDomain(domain) {
 		return fmt.Errorf("域名 %s 的证书信息已存在，无需重复添加\n", domain)
 	}
 
-	// 自动从宝塔/Nginx 配置匹配该域名的证书路径（issue #3：无需手动输入路径）
-	certPath, keyPath, found := findNginxCertPaths(domain)
-	if found {
-		fmt.Printf("已自动从 Nginx 配置找到证书路径:\n  证书: %s\n  私钥: %s\n", certPath, keyPath)
-		if utils.Confirm("是否使用自动匹配的路径") {
-			cert.CertPath = certPath
-			cert.KeyPath = keyPath
-		} else {
-			found = false
+	// 平台来源且尚未设置路径：自动从宝塔/Nginx 配置匹配，未匹配到再手动输入
+	if cert.CertPath == "" {
+		certPath, keyPath, found := findNginxCertPaths(domain)
+		if found {
+			fmt.Printf("已自动从 Nginx 配置找到证书路径:\n  证书: %s\n  私钥: %s\n", certPath, keyPath)
+			if utils.Confirm("是否使用自动匹配的路径") {
+				cert.CertPath = certPath
+				cert.KeyPath = keyPath
+			}
 		}
-	}
-	if !found {
-		cert.CertPath = utils.ReadInput("请输入证书存放路径（需包含文件名）: ", "")
-		cert.KeyPath = utils.ReadInput("请输入私钥存放路径（需包含文件名）: ", "")
+		if cert.CertPath == "" {
+			cert.CertPath = utils.ReadInput("请输入证书存放路径（需包含文件名）: ", "")
+			cert.KeyPath = utils.ReadInput("请输入私钥存放路径（需包含文件名）: ", "")
+		}
 	}
 
 	// 保存证书信息
@@ -1088,7 +1137,8 @@ func getConfigInfo() error {
 // 修改密钥
 func modifyKey() {
 	for {
-		thirdC := utils.ReadInput("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔: ", "")
+		// 直接回车可跳过配置（不配置平台时，添加域名会回退读取本地证书文件）
+		thirdC := utils.ReadInput("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔（直接回车跳过配置）: ", "")
 		if thirdC == "" {
 			return
 		}

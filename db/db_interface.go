@@ -69,7 +69,8 @@ func (db *SQLiteDB) UpdateCertificate(cert Certificate) error {
 }
 
 func (db *SQLiteDB) Close() {
-	// SQLite不需要显式关闭
+	// 关闭 SQLite 连接（释放文件句柄）
+	closeDB()
 }
 
 // BadgerImpl BadgerDB实现

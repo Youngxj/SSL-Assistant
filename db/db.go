@@ -284,3 +284,10 @@ func updateCertificateInDB(cert Certificate) error {
 	)
 	return err
 }
+
+// closeDB 关闭 SQLite 数据库连接（释放文件句柄，测试与显式关闭场景使用）
+func closeDB() {
+	if db != nil {
+		db.Close()
+	}
+}
