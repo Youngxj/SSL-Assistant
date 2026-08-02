@@ -6,6 +6,7 @@ require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/fatih/color v1.18.0
 	github.com/go-ini/ini v1.67.0
+	github.com/inconshreveable/mousetrap v1.1.0
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/robfig/cron/v3 v3.0.2-0.20210106135023-bc59245fe10e
@@ -25,7 +26,6 @@ require (
 	github.com/golang/protobuf v1.3.1 // indirect
 	github.com/golang/snappy v0.0.3 // indirect
 	github.com/google/flatbuffers v1.12.1 // indirect
-	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.12.3 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

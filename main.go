@@ -118,6 +118,10 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
+	// 禁用 cobra 的 Windows 双击默认行为（打印“This is a command line tool”后退出），
+	// 双击启动改由 runInteractiveMenu 处理，提供交互菜单。
+	cobra.MousetrapHelpText = ""
+
 	// 添加子命令
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(addCmd)
@@ -141,9 +145,74 @@ func main() {
 		return
 	}
 
+	// Windows 下双击 exe 启动：进入交互菜单；带参数从 cmd 运行时照常执行子命令。
+	if IsDoubleClick() {
+		runInteractiveMenu()
+		return
+	}
+
 	// 执行命令
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
+	}
+}
+
+// runInteractiveMenu 双击运行时进入的交互菜单：循环展示操作、读取选择并执行，
+// 直至用户选择退出。替代 cobra 默认的“请在 cmd 中运行”提示，实现双击可用。
+func runInteractiveMenu() {
+	for {
+		fmt.Println()
+		fmt.Println("========== SSL Assistant 操作菜单 ==========")
+		fmt.Println("  1. 初始化程序      (init)")
+		fmt.Println("  2. 添加证书        (add)")
+		fmt.Println("  3. 删除证书        (del)")
+		fmt.Println("  4. 查看证书        (show)")
+		fmt.Println("  5. 更新证书        (update)")
+		fmt.Println("  6. 快速添加域名    (find)")
+		fmt.Println("  7. 证书更新任务    (cron)")
+		fmt.Println("  8. 显示版本信息    (version)")
+		fmt.Println("  0. 退出")
+		fmt.Println("============================================")
+
+		choice := utils.ReadInput("请选择: ", "")
+		switch choice {
+		case "1":
+			runMenuAction("初始化程序", func() error { initConfig(); return nil })
+		case "2":
+			runMenuAction("添加证书", addCertificate)
+		case "3":
+			runMenuAction("删除证书", deleteCertificate)
+		case "4":
+			runMenuAction("查看证书", showCertificates)
+		case "5":
+			runMenuAction("更新证书", updateCertificates)
+		case "6":
+			runMenuAction("快速添加域名", func() error {
+				initGuide(true)
+				return findNginxPathCmd()
+			})
+		case "7":
+			runMenuAction("证书更新任务", func() error {
+				initGuide(true)
+				cronTask(false)
+				return nil
+			})
+		case "8":
+			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", Version)
+		case "0", "q", "exit":
+			fmt.Println("再见！")
+			return
+		default:
+			color.Yellow("无效选择，请重新输入\n")
+		}
+	}
+}
+
+// runMenuAction 执行菜单项并统一处理错误，完成后返回菜单继续。
+func runMenuAction(name string, fn func() error) {
+	fmt.Printf("\n========== %s ==========\n", name)
+	if err := fn(); err != nil {
+		color.Red("%s", err)
 	}
 }
