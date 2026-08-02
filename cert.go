@@ -1131,7 +1131,12 @@ func getConfigInfo() error {
 	}
 	for _, entry := range configs {
 		if strings.Contains(entry.Key, "key_secret") || strings.Contains(entry.Key, "api_key") {
-			entry.Value = "********"
+			if entry.Value == "" {
+				// 未配置时如实显示，避免空值被误认为已配置（打码）
+				entry.Value = "未配置"
+			} else {
+				entry.Value = "********"
+			}
 		}
 		color.Cyan("%s: %s\n", entry.Key, entry.Value)
 	}
