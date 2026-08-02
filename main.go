@@ -15,14 +15,22 @@ var Version string
 
 var rootCmd = &cobra.Command{
 	Use:   "ssl_assistant",
-	Short: "证书管理工具",
-	Long:  `SSL Assistant ` + displayVersion() + ` 是一个基于 Go 语言开发的跨平台工具，用于SSL远程证书拉取，并自动完成SSL证书更新及生效流程。`,
+	Short: "SSL 证书部署管理助手",
+	Long: `SSL Assistant ` + displayVersion() + ` 是一个基于 Go 语言开发的跨平台证书部署管理助手，用于 SSL 远程证书拉取、自动更新部署与重载生效。
+
+支持自动寻找 Nginx / Apache 配置文件（宝塔面板、1Panel、小皮面板），可配置计划任务定期更新证书，内置检查更新（checkupdate），并配备持续集成自动化测试。
+
+不带参数直接运行将进入交互操作菜单（类似 Windows 双击）；带子命令运行适合脚本与计划任务。`,
 	// 错误由 main() 统一打印并以非零码退出（避免 RunE 双重打印与 usage 刷屏）
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	Run: func(cmd *cobra.Command, args []string) {
-		// 如果没有子命令，则显示帮助信息
-		cmd.Help()
+		// 无子命令时：交互终端直接进入操作菜单（类似 Windows 双击）；非交互环境显示帮助
+		if utils.IsInteractive() {
+			runInteractiveMenu()
+		} else {
+			_ = cmd.Help()
+		}
 	},
 }
 
