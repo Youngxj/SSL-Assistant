@@ -76,7 +76,43 @@ func selectMenuNumeric(items []string, prompt string) int {
 	}
 }
 
-// selectMenuKeyNav 方向键单选菜单：↑/↓ 移动高亮，回车确认，ESC 取消。
+// readRawKey 读取原始终端的一个按键。
+// 方向键为 ESC 序列（如 \x1b[A），补齐读取后续字节；兼容 VT 模式（\x1b[A）与应用模式（\x1bOA，归一为 \x1b[A）。
+// 读取失败返回 nil。
+func readRawKey() []byte {
+	one := make([]byte, 1)
+	if _, err := os.Stdin.Read(one); err != nil {
+		return nil
+	}
+	if one[0] != 0x1b {
+		return one
+	}
+	// ESC 序列：读后续字节（最多 2 个，如 [A 或 OA）
+	rest := make([]byte, 2)
+	n := 0
+	for n < 2 {
+		m, err := os.Stdin.Read(rest[n:])
+		if err != nil {
+			break
+		}
+		n += m
+	}
+	// 应用模式 \x1bOA/B/C/D → 归一为 \x1b[A/B/C/D，统一方向键处理
+	if n >= 2 && rest[0] == 'O' && (rest[1] == 'A' || rest[1] == 'B' || rest[1] == 'C' || rest[1] == 'D') {
+		rest[0] = '['
+	}
+	return append(one, rest[:n]...)
+}
+
+// 方向键序列的第三个字节（归一后）
+const (
+	keyUp    = 'A' // ↑
+	keyDown  = 'B' // ↓
+	keyRight = 'C' // →
+	keyLeft  = 'D' // ←
+)
+
+// selectMenuKeyNav 方向键单选菜单：↑/↓/←/→ 移动高亮，回车确认，ESC 取消。
 // 需要原始终端输入；MakeRaw 失败时回退序号输入。
 func selectMenuKeyNav(items []string, prompt string) int {
 	if prompt == "" {
@@ -90,6 +126,8 @@ func selectMenuKeyNav(items []string, prompt string) int {
 		return selectMenuNumeric(items, prompt)
 	}
 	defer term.Restore(fd, oldState)
+	// Windows 控制台需启用虚拟终端输入，方向键才会产生可读字节流
+	_ = enableVTInput(fd)
 
 	// 隐藏光标，退出时恢复
 	fmt.Print("\x1b[?25l")
@@ -113,30 +151,9 @@ func selectMenuKeyNav(items []string, prompt string) int {
 		fmt.Printf("\x1b[K%s", prompt)
 	}
 
-	// readKey 读取一个按键；方向键等 ESC 序列（\x1b[A）补齐读取
-	readKey := func() []byte {
-		one := make([]byte, 1)
-		if _, err := os.Stdin.Read(one); err != nil {
-			return nil
-		}
-		if one[0] != 0x1b {
-			return one
-		}
-		rest := make([]byte, 2)
-		n := 0
-		for n < 2 {
-			m, err := os.Stdin.Read(rest[n:])
-			if err != nil {
-				break
-			}
-			n += m
-		}
-		return append(one, rest[:n]...)
-	}
-
 	render(true)
 	for {
-		key := readKey()
+		key := readRawKey()
 		if key == nil {
 			return -1
 		}
@@ -150,15 +167,15 @@ func selectMenuKeyNav(items []string, prompt string) int {
 			fmt.Print("\x1b[?25h\r\n")
 			term.Restore(fd, oldState)
 			os.Exit(130)
-		case key[0] == 0x1b && len(key) >= 3 && key[1] == '[':
-			// ESC 序列：方向键
+		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
+			// 方向键（↑/↓ 上下移动，←/→ 左右移动）
 			switch key[2] {
-			case 'A': // ↑
+			case keyUp, keyLeft: // ↑ 或 ←
 				if cur > 0 {
 					cur--
 					render(false)
 				}
-			case 'B': // ↓
+			case keyDown, keyRight: // ↓ 或 →
 				if cur < len(items)-1 {
 					cur++
 					render(false)
@@ -238,6 +255,8 @@ func multiSelectKeyNav(items []string, prompt string) []int {
 		return multiSelectNumeric(items, prompt)
 	}
 	defer term.Restore(fd, oldState)
+	// Windows 控制台需启用虚拟终端输入，方向键才会产生可读字节流
+	_ = enableVTInput(fd)
 
 	// 隐藏光标，退出时恢复
 	fmt.Print("\x1b[?25l")
@@ -265,30 +284,9 @@ func multiSelectKeyNav(items []string, prompt string) []int {
 		fmt.Printf("\x1b[K%s", prompt)
 	}
 
-	// readKey 读取一个按键；方向键等 ESC 序列（\x1b[A）补齐读取
-	readKey := func() []byte {
-		one := make([]byte, 1)
-		if _, err := os.Stdin.Read(one); err != nil {
-			return nil
-		}
-		if one[0] != 0x1b {
-			return one
-		}
-		rest := make([]byte, 2)
-		n := 0
-		for n < 2 {
-			m, err := os.Stdin.Read(rest[n:])
-			if err != nil {
-				break
-			}
-			n += m
-		}
-		return append(one, rest[:n]...)
-	}
-
 	render(true)
 	for {
-		key := readKey()
+		key := readRawKey()
 		if key == nil {
 			break
 		}
@@ -297,19 +295,25 @@ func multiSelectKeyNav(items []string, prompt string) []int {
 			// 回车确认
 			fmt.Print("\r\n")
 			return collectSelected(selected)
+		case key[0] == 0x03:
+			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
+			fmt.Print("\x1b[?25h\r\n")
+			term.Restore(fd, oldState)
+			os.Exit(130)
 		case key[0] == ' ':
 			// 空格切换当前项勾选
 			selected[cur] = !selected[cur]
 			render(false)
 		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
+			// 方向键（↑/↓/←/→ 均移动高亮）
 			switch key[2] {
-			case 'A': // ↑
+			case keyUp, keyLeft:
 				cur--
 				if cur < 0 {
 					cur = len(items) - 1
 				}
 				render(false)
-			case 'B': // ↓
+			case keyDown, keyRight:
 				cur++
 				if cur >= len(items) {
 					cur = 0
