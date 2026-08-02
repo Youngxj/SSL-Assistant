@@ -305,10 +305,13 @@ cd SSL-Assistant
 编译项目
 
 ```bash
-go build -o ssl_assistant
+make build        # 自动注入 git 版本号（tag 或最近提交哈希），推荐
+go build -o ssl_assistant   # 纯编译（不注入版本号，checkupdate 会显示"版本未知"）
 ```
 
 将可执行文件添加到系统路径或直接 `./ssl_assistant init` 运行
+
+> 发布时版本号由 GoReleaser 自动注入（`.goreleaser.yaml` 的 `-X main.Version={{.Version}}`），打 tag 触发 CI 即自动带版本，无需手动。
 
 ### 运行测试 ✅
 
