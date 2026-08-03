@@ -37,7 +37,7 @@ Windows、Linux 和 macOS 平台 🖥️，可以自动寻找 Nginx / Apache 服
 - [x] 支持 Windows 和 Linux 平台 🎉
 - [x] 手动指定 Nginx 配置目录 ✅
 - [x] 初始化自动检索 Nginx 配置，无需手动输入路径 ✅
-- 支持自动寻找 Nginx 配置文件
+- 支持自动寻找 Nginx/Apache 配置文件
     - [x] 原生Nginx环境 🐱‍🏍
     - [x] [宝塔面板](https://bt.cn) 🏰（含新版证书目录 `/www/server/panel/vhost/cert/<域名>/` 自动识别）
     - [x] [1Panel](https://1panel.cn) 📦
@@ -74,20 +74,17 @@ Windows 用户可以直接**双击 `SSL-Assistant.exe`** 启动，程序会打�
 
 ```
 ========== SSL Assistant 操作菜单 ==========
-  1. 初始化程序      (init)
-  2. 添加证书        (add)
-  3. 删除证书        (del)
-  4. 查看证书        (show)
-  5. 更新证书        (update)
-  6. 快速添加域名    (find)
-  7. 证书更新任务    (cron)
-  8. 显示版本信息    (version)
-  9. 检查更新        (checkupdate)
-  0. 退出
+  1. 初始化程序 (init)    2. 添加证书 (add)     3. 删除证书 (del)
+  4. 查看证书 (show)      5. 更新证书 (update)  6. 快速添加域名 (find)
+  7. 证书更新任务 (cron)  8. 修改密钥           9. 修改重载命令
+ 10. 修改提前更新天数    11. 查看配置信息      12. 显示版本信息 (version)
+ 13. 检查更新 (checkupdate)                    14. 退出
 ============================================
 ```
 
-输入菜单项对应的数字即可执行操作，完成后自动返回菜单，选择 `0` 退出。
+菜单项**平铺**展示，使用**方向键 `←`/`→` 左右移动、`↑`/`↓` 上下换行**，回车确认（ESC 取消）；非终端环境（管道/脚本）自动回退为序号输入。选中某项执行后自动返回菜单，选择「退出」结束。
+
+> Linux 下菜单多一项「查看任务」（在「证书更新任务」之后）。
 
 > 从 cmd / PowerShell 带参数运行（如 `SSL-Assistant.exe show`、`SSL-Assistant.exe update`）时行为不变，仍为普通命令行模式，适合计划任务等自动化场景。
 

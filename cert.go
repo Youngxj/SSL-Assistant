@@ -87,7 +87,7 @@ func initConfig() {
 
 	color.Green("初始化成功")
 
-	// 寻找 Nginx 配置文件，聚合返回站点列表（按主域名去重）
+	// 寻找 Nginx/Apache 配置文件，聚合返回站点列表（按主域名去重）
 	sites := findNginxConfigs(defaultNginxPaths)
 
 	// 默认路径已找到证书配置则不再询问自定义路径（issue #3：避免用户困惑于"必须输入路径"）
@@ -97,7 +97,7 @@ func initConfig() {
 		selectAndAddNginxSites(sites)
 	} else {
 		color.Yellow("默认路径未检索到证书配置，可自定义配置文件路径（直接回车跳过）")
-		// 输入自定义Nginx配置文件路径
+		// 输入自定义 Nginx/Apache 配置文件路径
 		err = findNginxPathCmd()
 		if err != nil {
 			color.Red("%s", err)
@@ -209,10 +209,10 @@ func scanAllCertDirs() []nginxSite {
 	return sites
 }
 
-// findNginxConfigs 寻找 Nginx 配置文件，聚合返回解析出的站点（按主域名去重合并，不立即添加）
+// findNginxConfigs 寻找 Nginx/Apache 配置文件，聚合返回解析出的站点（按主域名去重合并，不立即添加）
 // paths 为空时使用默认路径并自动探测面板（小皮 phpstudy）站点目录
 func findNginxConfigs(paths []string) []nginxSite {
-	color.Cyan("正在寻找 Nginx 配置文件...")
+	color.Cyan("正在寻找 Nginx/Apache 配置文件...")
 
 	// 智能探测面板（小皮 phpstudy）站点目录并合并
 	paths = append(paths, discoverPanelPaths()...)
@@ -1067,101 +1067,15 @@ func showPlatformStatus() {
 	}
 }
 
-// 查看证书
+// 查看证书：展示证书表格与平台状态。
+// 菜单操作已合并到主菜单（runInteractiveMenu），此处仅负责展示，返回后由调用方继续。
 func showCertificates() error {
 	if err := initGuide(false); err != nil {
 		return err
 	}
-
-	for {
-		getCertificates()
-		showPlatformStatus()
-		// 菜单项按平台动态生成（终端方向键选择，非终端序号回退）：
-		// Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
-		items := []string{
-			"添加证书",
-			"删除证书",
-			"修改密钥",
-			"修改重载命令",
-			"更新证书",
-			"修改提前更新天数",
-			"快速添加域名（Nginx目录检索）",
-		}
-		viewTaskIdx := -1
-		if runtime.GOOS != "windows" {
-			viewTaskIdx = len(items)
-			items = append(items, "查看任务")
-		}
-		items = append(items, "查看配置信息", "退出")
-		configIdx := len(items) - 2 // 查看配置信息
-		exitIdx := len(items) - 1   // 退出
-
-		idx := utils.SelectMenu(items, "请选择操作（↑/↓ 移动，回车确认）: ")
-
-		// ESC 取消返回 -1，优先处理（避免与 viewTaskIdx=-1 冲突）
-		if idx == -1 {
-			color.Yellow("已取消\n")
-			fmt.Println()
-			continue
-		}
-		// 查看任务仅 Linux 显示（Windows 时 viewTaskIdx=-1 且上面已处理取消）
-		if viewTaskIdx >= 0 && idx == viewTaskIdx {
-			cPid := checkTask()
-			if cPid == "" {
-				color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
-			} else {
-				color.Green("当前任务PID: %s", cPid)
-			}
-			fmt.Println()
-			continue
-		}
-
-		switch idx {
-		case 0: // 添加证书
-			err := addCertificate()
-			if err != nil {
-				return err
-			}
-		case 1: // 删除证书
-			err := deleteCertificate()
-			if err != nil {
-				return err
-			}
-		case 2: // 修改密钥
-			modifyKey()
-		case 3: // 修改重载命令
-			err := modifyRestartCmd()
-			if err != nil {
-				return err
-			}
-		case 4: // 更新证书
-			err := updateCertificates()
-			if err != nil {
-				return err
-			}
-		case 5: // 修改提前更新天数
-			err := modifyExpirationDay()
-			if err != nil {
-				return err
-			}
-		case 6: // 快速添加域名
-			err := findNginxPathCmd()
-			if err != nil {
-				return err
-			}
-		case configIdx: // 查看配置信息
-			err := getConfigInfo()
-			if err != nil {
-				return err
-			}
-		case exitIdx: // 退出
-			fmt.Println("程序退出")
-			os.Exit(0)
-		default:
-			color.Yellow("已取消\n")
-		}
-		fmt.Println()
-	}
+	getCertificates()
+	showPlatformStatus()
+	return nil
 }
 
 // 修改重载命令
@@ -1354,17 +1268,17 @@ func executeRestartCmd() error {
 	return nil
 }
 
-// 查找Nginx配置目录
+// 查找 Nginx/Apache 配置目录
 func findNginxPathCmd() (err error) {
 
-	// 输入自定义Nginx配置文件路径，每行一个，避免 Windows 路径含空格被拆分；示例按平台显示
+	// 输入自定义 Nginx/Apache 配置文件路径，每行一个，避免 Windows 路径含空格被拆分；示例按平台显示
 	nginxExample := "/etc/nginx/nginx.conf"
 	nginxDirExample := "/etc/nginx/conf.d"
 	if runtime.GOOS == "windows" {
 		nginxExample = `C:\nginx\conf\nginx.conf`
 		nginxDirExample = `C:\nginx\conf\vhosts`
 	}
-	fmt.Printf("请输入 Nginx 配置文件路径，每行一个。支持三种写法：\n  1. 目录（自动匹配该目录下 *.conf，如 %s）\n  2. 单个文件（如 %s）\n  3. 通配符（如 %s\\*.conf）\n输入完成后请直接回车(空行)结束:\n", nginxDirExample, nginxExample, nginxDirExample)
+	fmt.Printf("请输入 Nginx/Apache 配置文件路径，每行一个。支持三种写法：\n  1. 目录（自动匹配该目录下 *.conf，如 %s）\n  2. 单个文件（如 %s）\n  3. 通配符（如 %s\\*.conf）\n输入完成后请直接回车(空行)结束:\n", nginxDirExample, nginxExample, nginxDirExample)
 	var nginxPaths []string
 	for {
 		line := utils.ReadInput("", "")
@@ -1375,9 +1289,9 @@ func findNginxPathCmd() (err error) {
 		color.Cyan("已添加路径: %s（继续输入下一行，或直接回车结束输入）\n", line)
 	}
 	if len(nginxPaths) > 0 {
-		// 寻找 Nginx 配置文件
+		// 寻找 Nginx/Apache 配置文件
 		sites := findNginxConfigs(nginxPaths)
-		color.Green("Nginx配置文件查找完成")
+		color.Green("Nginx/Apache配置文件查找完成")
 		// 列出检索到的域名，回车勾选后自动添加
 		selectAndAddNginxSites(sites)
 	} else {

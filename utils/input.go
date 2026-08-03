@@ -112,11 +112,48 @@ const (
 	keyLeft  = 'D' // ←
 )
 
-// selectMenuKeyNav 方向键单选菜单：↑/↓/←/→ 移动高亮，回车确认，ESC 取消。
-// 需要原始终端输入；MakeRaw 失败时回退序号输入。
+// displayWidth 计算字符串在终端中的显示宽度（CJK 全角字符按 2 列计），用于平铺对齐。
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch {
+		case r == 0: // 忽略空字符
+		case r >= 0x1100 && (r <= 0x115F || r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0xA4CF && r != 0x303F) ||
+			(r >= 0xAC00 && r <= 0xD7A3) ||
+			(r >= 0xF900 && r <= 0xFAFF) ||
+			(r >= 0xFE30 && r <= 0xFE4F) ||
+			(r >= 0xFF00 && r <= 0xFF60) ||
+			(r >= 0xFFE0 && r <= 0xFFE6)):
+			w += 2
+		default:
+			w++
+		}
+	}
+	return w
+}
+
+// menuGridCols 计算平铺列数：每项实际占用 itemWidth+1 列（含项间 1 空格），
+// 保证整行不超出终端宽度；至少 1 列，最多不超过项数。
+func menuGridCols(termWidth, itemWidth, n int) int {
+	if termWidth <= 0 || itemWidth <= 0 || n <= 0 {
+		return 1
+	}
+	cols := (termWidth + 1) / (itemWidth + 1)
+	if cols < 1 {
+		cols = 1
+	}
+	if cols > n {
+		cols = n
+	}
+	return cols
+}
+
+// selectMenuKeyNav 方向键平铺菜单：菜单项按终端宽度横向平铺（←/→ 左右移动、↑/↓ 上下换行），
+// 回车确认，ESC 取消。需要原始终端输入；MakeRaw 失败时回退序号输入。
 func selectMenuKeyNav(items []string, prompt string) int {
 	if prompt == "" {
-		prompt = "↑/↓ 移动，回车确认，ESC 取消: "
+		prompt = "←/→ 移动，回车确认，ESC 取消: "
 	}
 	cur := 0
 	fd := int(os.Stdin.Fd())
@@ -133,20 +170,47 @@ func selectMenuKeyNav(items []string, prompt string) int {
 	fmt.Print("\x1b[?25l")
 	defer fmt.Print("\x1b[?25h")
 
-	// render 重绘整个菜单区域（菜单项 + 提示行）
+	// 平铺列数：按终端宽度与最长菜单项宽度估算（至少 1 列，最多等于项数）
+	cols := 1
+	itemWidth := 0
+	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
+		maxW := 0
+		for _, it := range items {
+			if dw := displayWidth(fmt.Sprintf("%2d. %s", len(items), it)); dw > maxW {
+				maxW = dw
+			}
+		}
+		itemWidth = maxW + 2 // 项间距
+		cols = menuGridCols(w, itemWidth, len(items))
+	}
+	rows := (len(items) + cols - 1) / cols
+
+	// render 重绘整个菜单区域（平铺网格 + 提示行）
 	render := func(first bool) {
 		if !first {
-			// CSI n F：上移 n 行并回到行首
-			fmt.Printf("\x1b[%dF", len(items))
+			// CSI n F：上移 n 行；\r 回到行首（xterm 系终端上移保持列位置，需显式回车）
+			fmt.Printf("\x1b[%dF\r", rows)
 		}
-		for i, item := range items {
-			line := fmt.Sprintf("%d. %s", i+1, item)
-			if i == cur {
-				fmt.Print("> " + color.New(color.ReverseVideo).Sprint(line))
-			} else {
-				fmt.Print("  " + line)
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				i := r*cols + c
+				if i >= len(items) {
+					break
+				}
+				line := fmt.Sprintf("%2d. %s", i+1, items[i])
+				if pad := itemWidth - displayWidth(line); pad > 0 {
+					line += strings.Repeat(" ", pad)
+				}
+				if i == cur {
+					fmt.Print(color.New(color.ReverseVideo).Sprint(line))
+				} else {
+					fmt.Print(line)
+				}
+				if c < cols-1 && i < len(items)-1 {
+					fmt.Print(" ")
+				}
 			}
-			fmt.Print("\x1b[K\r\n") // 清行并显式回车换行（raw 模式下 \n 不会自动 \r）
+			fmt.Print("\x1b[K\r\n") // 行尾清行并显式回车换行（raw 模式下 \n 不会自动 \r）
 		}
 		fmt.Printf("\x1b[K%s", prompt)
 	}
@@ -168,16 +232,26 @@ func selectMenuKeyNav(items []string, prompt string) int {
 			term.Restore(fd, oldState)
 			os.Exit(130)
 		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
-			// 方向键（↑/↓ 上下移动，←/→ 左右移动）
+			// 方向键（←/→ 左右移动，↑/↓ 上下换行）
 			switch key[2] {
-			case keyUp, keyLeft: // ↑ 或 ←
+			case keyLeft: // ←
 				if cur > 0 {
 					cur--
 					render(false)
 				}
-			case keyDown, keyRight: // ↓ 或 →
+			case keyRight: // →
 				if cur < len(items)-1 {
 					cur++
+					render(false)
+				}
+			case keyUp: // ↑
+				if cur >= cols {
+					cur -= cols
+					render(false)
+				}
+			case keyDown: // ↓
+				if cur+cols < len(items) {
+					cur += cols
 					render(false)
 				}
 			}
@@ -265,8 +339,8 @@ func multiSelectKeyNav(items []string, prompt string) []int {
 	// render 重绘整个列表区域（列表 + 提示行）；first=true 时不移动光标（首次打印）
 	render := func(first bool) {
 		if !first {
-			// CSI n F：上移 n 行并回到行首（n = 列表行数，光标当前在提示行，回到列表第一行）
-			fmt.Printf("\x1b[%dF", len(items))
+			// CSI n F：上移 n 行；\r 回到行首（xterm 系终端上移保持列位置，需显式回车）
+			fmt.Printf("\x1b[%dF\r", len(items))
 		}
 		for i, item := range items {
 			mark := " "

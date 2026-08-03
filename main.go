@@ -5,6 +5,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"os"
+	"runtime"
 	"ssl_assistant/config"
 	"ssl_assistant/db"
 	"ssl_assistant/third/github"
@@ -81,8 +82,8 @@ var updateCmd = &cobra.Command{
 
 var findCmd = &cobra.Command{
 	Use:   "find",
-	Short: "快速添加域名（Nginx目录检索）",
-	Long:  `检索Nginx目录，程序会自动检索Nginx目录下的所有证书文件，并将证书文件路径保存到数据库中，用于快速添加站点`,
+	Short: "快速添加域名（Nginx/Apache目录检索）",
+	Long:  `检索Nginx/Apache配置目录，程序会自动检索其中的证书配置，并将证书文件路径保存到数据库中，用于快速添加站点`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := initGuide(true); err != nil {
 			return err
@@ -183,13 +184,15 @@ func main() {
 	}
 }
 
-// runInteractiveMenu 双击运行时进入的交互菜单：循环展示操作、读取选择并执行，
+// runInteractiveMenu 双击/无参数运行时进入的交互菜单：循环展示操作、读取选择并执行，
 // 直至用户选择退出。替代 cobra 默认的“请在 cmd 中运行”提示，实现双击可用。
+// 菜单为完整操作列表（合并原主菜单与 show 二级菜单），平铺展示，方向键 ←/→ 左右移动、↑/↓ 上下换行。
 func runInteractiveMenu() {
 	for {
 		fmt.Println()
 		fmt.Println("========== SSL Assistant 操作菜单 ==========")
-		// 终端下支持方向键选择（↑/↓ + 回车），非终端回退序号输入
+		// 菜单项按平台动态生成（终端方向键选择，非终端序号回退）：
+		// Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
 		items := []string{
 			"初始化程序      (init)",
 			"添加证书        (add)",
@@ -198,14 +201,62 @@ func runInteractiveMenu() {
 			"更新证书        (update)",
 			"快速添加域名    (find)",
 			"证书更新任务    (cron)",
+			"修改密钥",
+			"修改重载命令",
+			"修改提前更新天数",
+			"查看配置信息",
 			"显示版本信息    (version)",
 			"检查更新        (checkupdate)",
 			"退出",
 		}
-		idx := utils.SelectMenu(items, "请选择（↑/↓ 移动，回车确认）: ")
+		// 各功能在 items 中的索引：前 7 项固定，后续按平台插入"查看任务"后再顺延
+		idxCron := 6
+		viewTaskIdx := -1
+		next := 7
+		if runtime.GOOS != "windows" {
+			viewTaskIdx = next
+			next++
+			items = append(items[:idxCron+1], append([]string{"查看任务"}, items[idxCron+1:]...)...)
+		}
+		idxModifyKey := next
+		next++
+		idxModifyRestart := next
+		next++
+		idxModifyExpiry := next
+		next++
+		idxConfig := next
+		next++
+		idxVersion := next
+		next++
+		idxCheckUpdate := next
+		next++
+		exitIdx := next
+
+		idx := utils.SelectMenu(items, "请选择（←/→ 移动，回车确认）: ")
 		fmt.Println("============================================")
 
 		// 方向键菜单返回索引（0 起）；ESC 取消返回 -1
+		if idx == -1 {
+			color.Yellow("已取消\n")
+			continue
+		}
+		// 查看任务仅 Linux 显示（Windows 时 viewTaskIdx=-1 且上面已处理取消）
+		if idx == viewTaskIdx {
+			runMenuAction("查看任务", func() error {
+				if err := initGuide(true); err != nil {
+					return err
+				}
+				cPid := checkTask()
+				if cPid == "" {
+					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
+				} else {
+					color.Green("当前任务PID: %s", cPid)
+				}
+				return nil
+			})
+			continue
+		}
+
 		switch idx {
 		case 0:
 			runMenuAction("初始化程序", func() error { initConfig(); return nil })
@@ -224,19 +275,38 @@ func runInteractiveMenu() {
 				}
 				return findNginxPathCmd()
 			})
-		case 6:
-			// Windows 下 cron 常驻进程不适用（会阻塞窗口），引导使用任务计划程序
-			color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
-			utils.ReadInput("按回车返回菜单", "")
-		case 7:
+		case idxCron:
+			// Windows 下 cron 常驻进程不适用（会阻塞窗口），引导使用任务计划程序；
+			// Linux 下与 CLI `cron` 命令一致：添加证书更新任务（已存在时提示并显示 PID，同「查看任务」）
+			if runtime.GOOS == "windows" {
+				color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
+				utils.ReadInput("按回车返回菜单", "")
+			} else {
+				runMenuAction("证书更新任务", func() error {
+					if err := initGuide(true); err != nil {
+						return err
+					}
+					cronTask(false)
+					return nil
+				})
+			}
+		case idxModifyKey:
+			runMenuAction("修改密钥", func() error { modifyKey(); return nil })
+		case idxModifyRestart:
+			runMenuAction("修改重载命令", modifyRestartCmd)
+		case idxModifyExpiry:
+			runMenuAction("修改提前更新天数", modifyExpirationDay)
+		case idxConfig:
+			runMenuAction("查看配置信息", getConfigInfo)
+		case idxVersion:
 			fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
-		case 8:
+		case idxCheckUpdate:
 			runMenuAction("检查更新", func() error {
 				// 菜单场景：内部已打印完整提示（含手动下载地址），不重复输出错误
 				checkUpdate()
 				return nil
 			})
-		case 9:
+		case exitIdx:
 			fmt.Println("再见！")
 			return
 		default:
