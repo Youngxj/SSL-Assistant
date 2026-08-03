@@ -19,3 +19,6 @@ go.work
 
 # 由goreleaser init添加:
 dist/
+# Reasonix 本地工具文件
+.reasonix/
+reasonix.toml
