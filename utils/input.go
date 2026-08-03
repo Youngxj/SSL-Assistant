@@ -16,24 +16,6 @@ import (
 // 必须共享而非每次新建：bufio.Reader 会预读缓冲，新建会丢弃已被前一次读入缓冲的数据（管道多行输入场景）。
 var stdinReader *bufio.Reader
 
-// activeCanvas 交互菜单模式下注册的全局画布（由 runInteractiveMenu 设置）。
-// SelectMenu/MultiSelectCheckbox 检测到画布激活时改用画布版渲染（分区常驻），
-// 非交互 CLI 模式永不设置，行为不变。
-var activeCanvas *Canvas
-
-// SetActiveCanvas 注册/清除全局画布。cv 为 nil 时清除（退出交互菜单）。
-func SetActiveCanvas(cv *Canvas) { activeCanvas = cv }
-
-// exitWithCleanup 退出前清理画布（恢复终端/结束输出重定向），
-// 避免 ReadInput EOF 或 Ctrl+C 直接 os.Exit 时终端残留画布画面。
-func exitWithCleanup(code int) {
-	if activeCanvas != nil {
-		activeCanvas.Restore()
-		activeCanvas = nil
-	}
-	os.Exit(code)
-}
-
 func inputReader() *bufio.Reader {
 	if stdinReader == nil {
 		stdinReader = bufio.NewReader(os.Stdin)
@@ -59,7 +41,7 @@ func ReadInput(prompt, def string) string {
 	if err != nil {
 		// EOF 或读取失败：视为用户中断/非交互环境，非零退出避免被脚本误判为成功
 		fmt.Println()
-		exitWithCleanup(1)
+		os.Exit(1)
 	}
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -68,113 +50,6 @@ func ReadInput(prompt, def string) string {
 	return input
 }
 
-// SelectMenu 终端下方向键单选菜单（↑/↓ 移动、回车确认、ESC 取消），非终端回退序号输入。
-// 交互菜单（画布激活）时渲染到画布辅区域，仅重绘菜单区；否则流式渲染。
-// 返回选中项索引（0 起）；取消/EOF 返回 -1。
-func SelectMenu(items []string, prompt string) int {
-	if len(items) == 0 {
-		return -1
-	}
-	if !IsInteractive() {
-		return selectMenuNumeric(items, prompt)
-	}
-	if activeCanvas != nil {
-		return selectMenuKeyNavOnCanvas(activeCanvas, items, prompt)
-	}
-	return selectMenuKeyNav(items, prompt)
-}
-
-// SelectMenuOnCanvas 画布版单选菜单（显式指定画布）：渲染在辅区域（菜单区），
-// 方向键移动时仅重绘菜单区高亮，不重绘列表区与反馈区。非终端环境回退序号输入。
-func SelectMenuOnCanvas(cv *Canvas, items []string, prompt string) int {
-	if len(items) == 0 {
-		return -1
-	}
-	if !IsInteractive() {
-		return selectMenuNumeric(items, prompt)
-	}
-	return selectMenuKeyNavOnCanvas(cv, items, prompt)
-}
-
-// selectMenuKeyNavOnCanvas 画布版方向键平铺菜单：复用 selectMenuKeyNav 的交互逻辑，
-// 但渲染调用 cv.DrawMenu（绝对定位到菜单区），移动时只重绘菜单区。
-func selectMenuKeyNavOnCanvas(cv *Canvas, items []string, prompt string) int {
-	if prompt == "" {
-		prompt = "←/→ 移动，回车确认，ESC 取消: "
-	}
-	cur := 0
-	fd := int(os.Stdin.Fd())
-
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return selectMenuNumeric(items, prompt)
-	}
-	defer term.Restore(fd, oldState)
-	// Windows 控制台需启用虚拟终端输入，方向键才会产生可读字节流
-	_ = enableVTInput(fd)
-
-	// 隐藏光标，退出时恢复（画布渲染走原始终端句柄）
-	fmt.Fprint(cv.termOut, "\x1b[?25l")
-	defer fmt.Fprint(cv.termOut, "\x1b[?25h")
-
-	termWidth := 80
-	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
-		termWidth = w
-	}
-	cols, _, _ := menuGridSize(items, termWidth)
-
-	// render 仅重绘菜单区（绝对定位由 cv.DrawMenu 完成）
-	render := func() {
-		cv.DrawMenu(items, cur)
-	}
-
-	render()
-	for {
-		key := readRawKey()
-		if key == nil {
-			return -1
-		}
-		switch {
-		case key[0] == '\r' || key[0] == '\n':
-			// 回车确认当前项
-			fmt.Fprint(cv.termOut, "\r\n")
-			return cur
-		case key[0] == 0x03:
-			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
-			fmt.Fprint(cv.termOut, "\x1b[?25h\r\n")
-			term.Restore(fd, oldState)
-			exitWithCleanup(130)
-		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
-			// 方向键（←/→ 左右移动，↑/↓ 上下换行）
-			switch key[2] {
-			case keyLeft: // ←
-				if cur > 0 {
-					cur--
-					render()
-				}
-			case keyRight: // →
-				if cur < len(items)-1 {
-					cur++
-					render()
-				}
-			case keyUp: // ↑
-				if cur >= cols {
-					cur -= cols
-					render()
-				}
-			case keyDown: // ↓
-				if cur+cols < len(items) {
-					cur += cols
-					render()
-				}
-			}
-		case key[0] == 0x1b:
-			// 单独的 ESC：取消
-			fmt.Fprint(cv.termOut, "\r\n")
-			return -1
-		}
-	}
-}
 
 // selectMenuNumeric 序号输入模式（非终端回退）：输入序号回车选择，直接回车默认第一项。
 func selectMenuNumeric(items []string, prompt string) int {
@@ -355,7 +230,7 @@ func selectMenuKeyNav(items []string, prompt string) int {
 			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
 			fmt.Print("\x1b[?25h\r\n")
 			term.Restore(fd, oldState)
-			exitWithCleanup(130)
+			os.Exit(130)
 		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
 			// 方向键（←/→ 左右移动，↑/↓ 上下换行）
 			switch key[2] {
@@ -388,141 +263,19 @@ func selectMenuKeyNav(items []string, prompt string) int {
 	}
 }
 
+
 // MultiSelectCheckbox 多选勾选列表。
 // 终端环境下为方向键交互：↑/↓ 移动高亮，空格切换勾选，回车确认（ESC 取消）；
 // 非终端（管道/重定向）回退为序号输入：输入序号（空格分隔可一次切换多个）后回车，直接回车确认。
-// 交互菜单（画布激活）时渲染到画布主区域（列表区）并随高亮滚动，其余区域不受影响。
 // 返回已勾选项的下标（与 items 顺序一致）；items 为空时返回空切片。
 func MultiSelectCheckbox(items []string, prompt string) []int {
 	if len(items) == 0 {
 		return nil
 	}
-	if !IsInteractive() {
-		return multiSelectNumeric(items, prompt)
+	if IsInteractive() {
+		return multiSelectKeyNav(items, prompt)
 	}
-	if activeCanvas != nil {
-		return multiSelectKeyNavOnCanvas(activeCanvas, items, prompt)
-	}
-	return multiSelectKeyNav(items, prompt)
-}
-
-// adjustWindow 计算滚动窗口起始行：确保高亮 cur 始终位于窗口 [winStart, winStart+visible) 内。
-// 返回新的 winStart。
-func adjustWindow(winStart, cur, visible int) int {
-	if cur < winStart {
-		winStart = cur
-	}
-	if cur >= winStart+visible {
-		winStart = cur - visible + 1
-	}
-	return winStart
-}
-
-// multiSelectKeyNavOnCanvas 画布版多选勾选：列表渲染在画布主区域（列表区），
-// 以当前高亮为中心的窗口滚动显示（窗口高度 = 列表区行数）；方向键移动、
-// 空格勾选仅重绘列表区，菜单区与反馈区不受影响。提示写入反馈区。
-func multiSelectKeyNavOnCanvas(cv *Canvas, items []string, prompt string) []int {
-	if prompt == "" {
-		prompt = "↑/↓ 移动，空格勾选，回车确认，ESC 取消: "
-	}
-	selected := make([]bool, len(items))
-	cur := 0
-	winStart := 0
-	visible := cv.listH
-	if visible > len(items) {
-		visible = len(items)
-	}
-	fd := int(os.Stdin.Fd())
-
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return multiSelectNumeric(items, prompt)
-	}
-	defer term.Restore(fd, oldState)
-	// Windows 控制台需启用虚拟终端输入，方向键才会产生可读字节流
-	_ = enableVTInput(fd)
-
-	// 隐藏光标，退出时恢复（画布渲染走原始终端句柄）
-	fmt.Fprint(cv.termOut, "\x1b[?25l")
-	defer fmt.Fprint(cv.termOut, "\x1b[?25h")
-
-	// render 仅重绘列表区（窗口随高亮滚动），提示写入反馈区
-	render := func() {
-		winStart = adjustWindow(winStart, cur, visible)
-		fmt.Fprintf(cv.termOut, "\x1b[%d;1H", cv.listTop)
-		for i := 0; i < cv.listH; i++ {
-			idx := winStart + i
-			var line string
-			if idx < len(items) {
-				mark := " "
-				if selected[idx] {
-					mark = "x"
-				}
-				line = fmt.Sprintf("[%s] %d. %s", mark, idx+1, items[idx])
-				if idx == cur {
-					line = "> " + color.New(color.ReverseVideo).Sprint(line)
-				} else {
-					line = "  " + line
-				}
-			}
-			if dw := displayWidth(line); dw > cv.width {
-				line = truncateWidth(line, cv.width)
-			}
-			fmt.Fprint(cv.termOut, "\x1b[K")
-			if line != "" {
-				fmt.Fprint(cv.termOut, line)
-			}
-			fmt.Fprint(cv.termOut, "\r\n")
-		}
-		// 提示写入反馈区
-		cv.ResetFeedback()
-		cv.Write([]byte(prompt + "\n"))
-	}
-
-	render()
-	for {
-		key := readRawKey()
-		if key == nil {
-			break
-		}
-		switch {
-		case key[0] == '\r' || key[0] == '\n':
-			// 回车确认
-			fmt.Fprint(cv.termOut, "\r\n")
-			return collectSelected(selected)
-		case key[0] == 0x03:
-			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
-			fmt.Fprint(cv.termOut, "\x1b[?25h\r\n")
-			term.Restore(fd, oldState)
-			exitWithCleanup(130)
-		case key[0] == ' ':
-			// 空格切换当前项勾选
-			selected[cur] = !selected[cur]
-			render()
-		case len(key) >= 3 && key[0] == 0x1b && key[1] == '[':
-			// 方向键（↑/↓/←/→ 均移动高亮）
-			switch key[2] {
-			case keyUp, keyLeft:
-				cur--
-				if cur < 0 {
-					cur = len(items) - 1
-				}
-				render()
-			case keyDown, keyRight:
-				cur++
-				if cur >= len(items) {
-					cur = 0
-				}
-				render()
-			}
-		case len(key) == 1 && key[0] == 0x1b:
-			// ESC 单独按下：取消选择
-			fmt.Fprint(cv.termOut, "\r\n")
-			return nil
-		}
-	}
-	fmt.Fprint(cv.termOut, "\r\n")
-	return collectSelected(selected)
+	return multiSelectNumeric(items, prompt)
 }
 
 // multiSelectNumeric 序号输入模式（非终端回退）：输入序号切换勾选，空行确认。
@@ -621,7 +374,7 @@ func multiSelectKeyNav(items []string, prompt string) []int {
 			// Ctrl+C：恢复终端与光标（os.Exit 会跳过 defer）并中断
 			fmt.Print("\x1b[?25h\r\n")
 			term.Restore(fd, oldState)
-			exitWithCleanup(130)
+			os.Exit(130)
 		case key[0] == ' ':
 			// 空格切换当前项勾选
 			selected[cur] = !selected[cur]
@@ -686,13 +439,13 @@ func ReadPassword(prompt string) string {
 		}
 		// 读取失败（EOF 等）直接退出，避免保存空值
 		fmt.Println()
-		exitWithCleanup(1)
+		os.Exit(1)
 	}
 	// 非终端环境回退明文读取
 	input, err := inputReader().ReadString('\n')
 	if err != nil {
 		fmt.Println()
-		exitWithCleanup(1)
+		os.Exit(1)
 	}
 	return strings.TrimSpace(input)
 }

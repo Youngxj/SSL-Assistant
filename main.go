@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/fatih/color"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"github.com/spf13/cobra"
 	"os"
 	"runtime"
@@ -11,7 +13,6 @@ import (
 	"ssl_assistant/db"
 	"ssl_assistant/third/github"
 	"ssl_assistant/utils"
-	"strings"
 )
 
 var Version string
@@ -186,11 +187,12 @@ func main() {
 	}
 }
 
-// runInteractiveMenu 双击/无参数运行时进入的交互菜单。
-// 使用常驻分区画布：主区域显示证书列表、辅区域显示操作菜单、反馈区显示操作输出。
-// 操作执行后仅刷新变化的区域，不重绘整个界面。
+// runInteractiveMenu 双击/无参数运行时进入的交互菜单（基于 tview 成熟 TUI 框架）。
+// 布局：上方证书列表（主区）、下方菜单平铺（辅区）、底部提示区。
+// 选择操作后通过 Suspend/Resume 以普通终端模式执行操作函数（输出/输入均原生可用），
+// 执行完回到 TUI 并刷新列表——框架自动处理方向键导航、窗口 resize、重绘。
 func runInteractiveMenu() {
-	// 菜单项按平台动态生成（终端方向键选择，非终端序号回退）：
+	// 菜单项按平台动态生成：
 	// Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
 	items := []string{
 		"初始化程序",
@@ -208,132 +210,241 @@ func runInteractiveMenu() {
 		"检查更新",
 		"退出",
 	}
-	// 各功能在 items 中的索引：前 7 项固定，后续按平台插入"查看任务"后再顺延
-	idxCron := 6
 	viewTaskIdx := -1
-	next := 7
 	if runtime.GOOS != "windows" {
-		viewTaskIdx = next
-		next++
-		items = append(items[:idxCron+1], append([]string{"查看任务"}, items[idxCron+1:]...)...)
+		viewTaskIdx = len(items)
+		items = append(items, "查看任务")
 	}
-	idxModifyKey := next
-	next++
-	idxModifyRestart := next
-	next++
-	idxModifyExpiry := next
-	next++
-	idxConfig := next
-	next++
-	idxVersion := next
-	next++
-	idxCheckUpdate := next
-	next++
-	exitIdx := next
 
-	// 初始化常驻画布：主区=证书列表，辅区=菜单，反馈区=操作输出
-	cv := utils.NewCanvas(items)
-	utils.SetActiveCanvas(cv)
-	defer func() {
-		utils.SetActiveCanvas(nil)
-		cv.Restore()
-	}()
-	cv.Init(captureCertListLines(), items, 0)
+	app := tview.NewApplication()
 
-	for {
-		// 菜单选择：仅重绘菜单区高亮（画布版内部处理回车换行与光标）
-		idx := utils.SelectMenuOnCanvas(cv, items, "")
+	// 平铺菜单列数（按终端宽度动态调整，闭包共享）
+	menuCols := 1
 
-		// ESC 取消返回 -1
-		if idx == -1 {
-			continue
-		}
-		// 查看任务仅 Linux 显示（Windows 时 viewTaskIdx=-1 且上面已处理取消）
-		if idx == viewTaskIdx {
-			cv.RunAction("查看任务", func() {
-				if err := initGuide(true); err != nil {
-					return
-				}
-				cPid := checkTask()
-				if cPid == "" {
-					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
-				} else {
-					color.Green("当前任务PID: %s", cPid)
-				}
-			})
-			continue
-		}
+	// 标题
+	title := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter).
+		SetText("[::b]SSL Assistant 操作菜单[::-]")
 
-		switch idx {
-		case 0:
-			cv.RunAction("初始化程序", func() { initConfig() })
-		case 1:
-			cv.RunAction("添加证书", func() { _ = addCertificate() })
-		case 2:
-			cv.RunAction("删除证书", func() { _ = deleteCertificate() })
-		case 3:
-			cv.RunAction("查看证书", func() { _ = showCertificates() })
-		case 4:
-			cv.RunAction("更新证书", func() { _ = updateCertificates() })
-		case 5:
-			cv.RunAction("快速添加域名", func() {
-				if err := initGuide(true); err != nil {
-					return
-				}
-				_ = findNginxPathCmd()
-			})
-		case idxCron:
-			// Windows 下 cron 常驻进程不适用（会阻塞窗口），引导使用任务计划程序；
-			// Linux 下与 CLI `cron` 命令一致：添加证书更新任务（已存在时提示并显示 PID，同「查看任务」）
-			if runtime.GOOS == "windows" {
-				cv.RunAction("证书更新任务", func() {
-					color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
-					utils.ReadInput("按回车返回菜单", "")
-				})
-			} else {
-				cv.RunAction("证书更新任务", func() {
+	// 主区：证书列表（含 ANSI 颜色）
+	listView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(true)
+	listView.SetBorder(true).SetTitle(" 证书列表 ")
+	refreshList := func() {
+		listView.Clear()
+		fmt.Fprint(tview.ANSIWriter(listView), captureCertListText())
+	}
+
+	// 反馈/提示区
+	status := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetText("←/→/↑/↓ 移动  回车执行   ESC 退出")
+
+	// 菜单：Table 单元格平铺（方向键导航由 tview 原生支持）
+	menu := tview.NewTable().
+		SetSelectable(true, true).
+		SetSelectedFunc(func(row, col int) {
+			idx := row*menuCols + col
+			if idx < 0 || idx >= len(items) {
+				return
+			}
+			if idx == viewTaskIdx {
+				runActionSuspended(app, "查看任务", func() {
 					if err := initGuide(true); err != nil {
 						return
 					}
-					cronTask(false)
+					cPid := checkTask()
+					if cPid == "" {
+						color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
+					} else {
+						color.Green("当前任务PID: %s", cPid)
+					}
 				})
+				refreshList()
+				return
 			}
-		case idxModifyKey:
-			cv.RunAction("修改密钥", func() { modifyKey() })
-		case idxModifyRestart:
-			cv.RunAction("修改重载命令", func() { _ = modifyRestartCmd() })
-		case idxModifyExpiry:
-			cv.RunAction("修改提前更新天数", func() { _ = modifyExpirationDay() })
-		case idxConfig:
-			cv.RunAction("查看配置信息", func() { _ = getConfigInfo() })
-		case idxVersion:
-			cv.RunAction("显示版本信息", func() {
-				fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
-			})
-		case idxCheckUpdate:
-			cv.RunAction("检查更新", func() {
-				// 菜单场景：内部已打印完整提示（含手动下载地址），不重复输出错误
-				_ = checkUpdate()
-			})
-		case exitIdx:
-			// 由 defer cv.Restore() 统一清屏并提示退出
-			return
-		default:
-			color.Yellow("已取消\n")
+			switch idx {
+			case 0:
+				runActionSuspended(app, "初始化程序", initConfig)
+			case 1:
+				runActionSuspended(app, "添加证书", func() { _ = addCertificate() })
+			case 2:
+				runActionSuspended(app, "删除证书", func() { _ = deleteCertificate() })
+			case 3:
+				runActionSuspended(app, "查看证书", func() { _ = showCertificates() })
+			case 4:
+				runActionSuspended(app, "更新证书", func() { _ = updateCertificates() })
+			case 5:
+				runActionSuspended(app, "快速添加域名", func() {
+					if err := initGuide(true); err != nil {
+						return
+					}
+					_ = findNginxPathCmd()
+				})
+			case 6:
+				// Windows 下 cron 常驻进程不适用，引导使用任务计划程序；
+				// Linux 下与 CLI `cron` 一致
+				if runtime.GOOS == "windows" {
+					runActionSuspended(app, "证书更新任务", func() {
+						color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
+					})
+				} else {
+					runActionSuspended(app, "证书更新任务", func() {
+						if err := initGuide(true); err != nil {
+							return
+						}
+						cronTask(false)
+					})
+				}
+			case 7:
+				runActionSuspended(app, "修改密钥", modifyKey)
+			case 8:
+				runActionSuspended(app, "修改重载命令", func() { _ = modifyRestartCmd() })
+			case 9:
+				runActionSuspended(app, "修改提前更新天数", func() { _ = modifyExpirationDay() })
+			case 10:
+				runActionSuspended(app, "查看配置信息", func() { _ = getConfigInfo() })
+			case 11:
+				runActionSuspended(app, "显示版本信息", func() {
+					fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
+				})
+			case 12:
+				runActionSuspended(app, "检查更新", func() { _ = checkUpdate() })
+			default:
+				// "退出"（index 13，两平台固定）与 Linux 的"查看任务"（已在上方处理）
+				if items[idx] == "退出" {
+					app.Stop()
+					return
+				}
+				color.Yellow("已取消\n")
+			}
+			refreshList()
+		})
+	// 平铺菜单：按终端宽度计算列数（初始 80 列，tview 启动后再按实际宽度重排）
+	menuCols = computeMenuCols(items, 80)
+	rebuildMenu := func() {
+		menu.Clear()
+		cols := menuCols
+		rows := (len(items) + cols - 1) / cols
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				i := r*cols + c
+				cell := tview.NewTableCell("")
+				if i < len(items) {
+					cell.SetText(fmt.Sprintf("%2d. %s", i+1, items[i])).
+						SetAlign(tview.AlignLeft)
+				} else {
+					// 末行空位：不可选中，避免方向键停在高亮空单元格
+					cell.SetSelectable(false)
+				}
+				menu.SetCell(r, c, cell)
+			}
 		}
+		menu.SetSelectable(true, true)
+		menu.Select(0, 0) // 重排后重置选中到首项，避免旧行列跳变
+	}
+	rebuildMenu()
 
-		// 操作完成后刷新列表区（主区域），菜单区与反馈区保持不变
-		cv.DrawList(captureCertListLines())
+	// 布局：标题 + 列表（弹性）+ 菜单 + 状态
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(title, 1, 0, false).
+		AddItem(listView, 0, 1, false).
+		AddItem(menu, 0, 0, true).
+		AddItem(status, 1, 0, false)
+
+	app.SetRoot(layout, true)
+
+	// 终端 resize 时按实际宽度重排菜单列数。
+	// 用 SetBeforeDrawFunc：回调在 root.Draw 前执行，直接改数据当帧生效，
+	// 无需 Queue*（在 draw 回调里 QueueUpdateDraw 会自锁，见 tview 事件循环实现）。
+	app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		if w, _ := screen.Size(); w > 0 {
+			if cols := computeMenuCols(items, w); cols != menuCols {
+				menuCols = cols
+				rebuildMenu()
+			}
+		}
+		return false // 不中断绘制
+	})
+
+	// 菜单获得焦点后 Enter 已由 SetSelectedFunc 处理；ESC 退出
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			app.Stop()
+			return nil
+		}
+		return event
+	})
+
+	refreshList()
+	if err := app.Run(); err != nil {
+		fmt.Printf("交互界面启动失败: %v\n", err)
 	}
 }
 
-// captureCertListLines 执行 getCertificates 并捕获其输出为行数组，
-// 供画布主区域（证书列表）渲染使用。
-// 由于 os.Stdout 是 *os.File，使用 os.Pipe 捕获（与 Canvas.BeginOutput 同思路）。
-func captureCertListLines() []string {
+// computeMenuCols 按终端宽度与最长菜单项计算平铺列数（至少 1 列）
+func computeMenuCols(items []string, termWidth int) int {
+	if len(items) == 0 {
+		return 1
+	}
+	maxW := 0
+	for _, it := range items {
+		if dw := displayWidthForMenu(fmt.Sprintf("%2d. %s", len(items), it)); dw > maxW {
+			maxW = dw
+		}
+	}
+	itemWidth := maxW + 1
+	cols := (termWidth + 1) / (itemWidth + 1)
+	if cols < 1 {
+		cols = 1
+	}
+	if cols > len(items) {
+		cols = len(items)
+	}
+	return cols
+}
+
+// displayWidthForMenu 计算字符串显示宽度（CJK 全角按 2 列），供菜单平铺对齐
+func displayWidthForMenu(s string) int {
+	w := 0
+	for _, r := range s {
+		if r >= 0x1100 && (r <= 0x115F || r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0xA4CF && r != 0x303F) ||
+			(r >= 0xAC00 && r <= 0xD7A3) ||
+			(r >= 0xF900 && r <= 0xFAFF) ||
+			(r >= 0xFE30 && r <= 0xFE4F) ||
+			(r >= 0xFF00 && r <= 0xFF60) ||
+			(r >= 0xFFE0 && r <= 0xFFE6)) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
+// runActionSuspended 以普通终端模式执行菜单操作：
+// tview Suspend(f) 恢复终端原始状态并在 f 内执行操作函数（输出/输入
+// ReadInput/Confirm 等均原生可用），f 返回后自动 Resume 回到 TUI 重绘。
+// 这是 tview 官方支持的"外部交互"模式，从根本上避免自绘画布的区域错乱/闪烁/残留问题。
+func runActionSuspended(app *tview.Application, title string, fn func()) {
+	app.Suspend(func() {
+		fmt.Printf("\n========== %s ==========\n", title)
+		fn()
+		fmt.Println("\n按回车返回菜单...")
+		utils.ReadInput("", "")
+	})
+}
+
+// captureCertListText 执行 getCertificates 并捕获其输出文本（含 ANSI 颜色），
+// 供 TUI 主区域证书列表渲染。
+// 由于 os.Stdout 是 *os.File，使用 os.Pipe 捕获；defer 保证异常时也能恢复与关闭。
+func captureCertListText() string {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return nil
+		return ""
 	}
 	oldOut, oldColor := os.Stdout, color.Output
 	os.Stdout = w
@@ -344,16 +455,14 @@ func captureCertListLines() []string {
 		defer close(done)
 		_, _ = buf.ReadFrom(r)
 	}()
+	defer func() {
+		w.Close()
+		os.Stdout, color.Output = oldOut, oldColor
+		<-done
+		r.Close()
+	}()
 	getCertificates()
-	w.Close()
-	os.Stdout, color.Output = oldOut, oldColor
-	<-done
-	r.Close()
-	text := strings.TrimRight(buf.String(), "\n")
-	if text == "" {
-		return nil
-	}
-	return strings.Split(text, "\n")
+	return buf.String()
 }
 
 // checkUpdate 检查 GitHub 最新版本并输出下载地址（不自动下载更新）。
