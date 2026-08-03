@@ -170,19 +170,21 @@ func selectMenuKeyNav(items []string, prompt string) int {
 	fmt.Print("\x1b[?25l")
 	defer fmt.Print("\x1b[?25h")
 
-	// 平铺列数：按终端宽度与最长菜单项宽度估算（至少 1 列，最多等于项数）
-	cols := 1
-	itemWidth := 0
+	// 平铺列数：按终端宽度与最长菜单项宽度估算（至少 1 列，最多等于项数）。
+	// GetSize 失败（双击启动/git-bash 伪终端/无控制台句柄等）时回退默认 80 列，
+	// 避免退化为单列竖排。
+	termWidth := 80 // 默认终端宽度
 	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
-		maxW := 0
-		for _, it := range items {
-			if dw := displayWidth(fmt.Sprintf("%2d. %s", len(items), it)); dw > maxW {
-				maxW = dw
-			}
-		}
-		itemWidth = maxW + 1 // 项间距（紧凑，每行尽量多放）
-		cols = menuGridCols(w, itemWidth, len(items))
+		termWidth = w
 	}
+	maxW := 0
+	for _, it := range items {
+		if dw := displayWidth(fmt.Sprintf("%2d. %s", len(items), it)); dw > maxW {
+			maxW = dw
+		}
+	}
+	itemWidth := maxW + 1 // 项间距（紧凑，每行尽量多放）
+	cols := menuGridCols(termWidth, itemWidth, len(items))
 	rows := (len(items) + cols - 1) / cols
 
 	// render 重绘整个菜单区域（平铺网格 + 提示行）
