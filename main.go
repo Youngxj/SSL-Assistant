@@ -324,6 +324,18 @@ func runInteractiveMenu() {
 		})
 	// 平铺菜单：按终端宽度计算列数（初始 80 列，tview 启动后再按实际宽度重排）
 	menuCols = computeMenuCols(items, 80)
+	// 菜单平铺行数（用于 Flex 布局固定高度）
+	menuRows := func() int {
+		return (len(items) + menuCols - 1) / menuCols
+	}
+
+	// 布局：标题 + 列表（弹性）+ 菜单（固定高度=菜单行数）+ 状态
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(title, 1, 0, false).
+		AddItem(listView, 0, 1, false).
+		AddItem(menu, menuRows(), 0, true).
+		AddItem(status, 1, 0, false)
+
 	rebuildMenu := func() {
 		menu.Clear()
 		cols := menuCols
@@ -333,7 +345,7 @@ func runInteractiveMenu() {
 				i := r*cols + c
 				cell := tview.NewTableCell("")
 				if i < len(items) {
-					cell.SetText(fmt.Sprintf("%2d. %s", i+1, items[i])).
+					cell.SetText(tview.Escape(fmt.Sprintf("%2d. %s", i+1, items[i]))).
 						SetAlign(tview.AlignLeft)
 				} else {
 					// 末行空位：不可选中，避免方向键停在高亮空单元格
@@ -343,16 +355,10 @@ func runInteractiveMenu() {
 			}
 		}
 		menu.SetSelectable(true, true)
-		menu.Select(0, 0) // 重排后重置选中到首项，避免旧行列跳变
+		menu.Select(0, 0)                      // 重排后重置选中到首项，避免旧行列跳变
+		layout.ResizeItem(menu, menuRows(), 0) // resize 后同步菜单高度
 	}
 	rebuildMenu()
-
-	// 布局：标题 + 列表（弹性）+ 菜单 + 状态
-	layout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(title, 1, 0, false).
-		AddItem(listView, 0, 1, false).
-		AddItem(menu, 0, 0, true).
-		AddItem(status, 1, 0, false)
 
 	app.SetRoot(layout, true)
 
