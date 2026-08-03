@@ -180,7 +180,7 @@ func selectMenuKeyNav(items []string, prompt string) int {
 				maxW = dw
 			}
 		}
-		itemWidth = maxW + 2 // 项间距
+		itemWidth = maxW + 1 // 项间距（紧凑，每行尽量多放）
 		cols = menuGridCols(w, itemWidth, len(items))
 	}
 	rows := (len(items) + cols - 1) / cols
