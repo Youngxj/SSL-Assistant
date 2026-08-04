@@ -577,3 +577,53 @@ func TestWrappedLineCount(t *testing.T) {
 		t.Errorf("混合行数应为 4，实际 %d", total)
 	}
 }
+
+// TestModalOverlayFullscreen：模态遮罩应撑满全屏（NewBox 默认 15x10 在左上角，
+// 若不 SetRect 会画成蓝色小块——回归测试）
+func TestModalOverlayFullscreen(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan string, 1)
+	go func() { result <- utils.TUIReadInput("test: ", "def") }()
+	runDone := make(chan struct{})
+	go func() { _ = app.Run(); close(runDone) }()
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+	select {
+	case <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("模态输入超时")
+	}
+
+	cells, _, _ := sim.GetContents()
+	blueCount := 0
+	for _, c := range cells {
+		_, bg, _ := c.Style.Decompose()
+		if bg == tcell.ColorBlue {
+			blueCount++
+		}
+	}
+	if blueCount < 1000 {
+		t.Errorf("遮罩应撑满全屏（蓝底 >1000 cell），实际 %d——疑似左上角小块", blueCount)
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}

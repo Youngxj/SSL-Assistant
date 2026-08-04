@@ -701,13 +701,14 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 	// 遮罩 + 居中模态：modal 页之上叠加遮罩，modal 居中显示。
 	// resize=false 让 SetRect 生效（AddPage resize=true 会撑满容器覆盖 SetRect）。
 	showModal := func(modal tview.Primitive, w, h int) {
-		// 遮罩页（全屏，深色背景）
-		overlay := tview.NewBox().SetBackgroundColor(tcell.ColorBlue)
-		// 计算居中位置（按终端尺寸；模拟屏测试下回退 80x24）
+		// 计算屏幕尺寸（按终端尺寸；模拟屏测试下回退 80x24）
 		screenW, screenH := 80, 24
 		if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 0 && th > 0 {
 			screenW, screenH = tw, th
 		}
+		// 遮罩页：显式撑满全屏（NewBox 默认 15x10 位于左上角，不 SetRect 会画成蓝色小块）
+		overlay := tview.NewBox().SetBackgroundColor(tcell.ColorBlue)
+		overlay.SetRect(0, 0, screenW, screenH)
 		x := (screenW - w) / 2
 		if x < 0 {
 			x = 0
