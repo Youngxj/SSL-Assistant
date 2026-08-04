@@ -306,7 +306,7 @@ https://github.com/Youngxj/SSL-Assistant/releases/latest
 版本号通过编译参数注入，正式发布版本形如 `v1.2.1`：
 
 ```bash
-go build -ldflags "-X main.Version=v1.2.1" -o ssl_assistant
+go build -ldflags "-s -w -X main.Version=v1.2.1" -o ssl_assistant
 ```
 
 本地直接 `go build` 不带参数时版本号为空，`checkupdate` 会提示"当前版本未知"，仍会输出最新版本与下载地址。

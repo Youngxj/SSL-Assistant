@@ -6,8 +6,9 @@ VERSION ?= $(shell git describe --tags --always)
 
 .PHONY: build test vet fmt clean
 
+# -s -w: 去掉符号表与 DWARF 调试信息，可显著减小体积（Windows 下约 42MB -> 15MB），不影响功能
 build:
-	go build -ldflags "-X main.Version=$(VERSION)" -o ssl_assistant
+	go build -ldflags "-s -w -X main.Version=$(VERSION)" -o ssl_assistant
 
 test:
 	go test ./...
