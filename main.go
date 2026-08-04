@@ -611,24 +611,26 @@ func displayWidthForMenu(s string) int {
 }
 
 // runActionMu 防止多个操作并发执行（并发替换 os.Stdout 会竞态、反馈区互踩）。
-// 锁在 goroutine 内持有整个操作周期；runAction 本身不阻塞（若上一个操作仍在执行，
-// 本次选择被忽略——用 TryLock 非阻塞探测）。
+// 锁在排队 goroutine 内持有整个操作周期；runAction 本身不阻塞事件循环。
 var runActionMu sync.Mutex
 
 // runAction 在 TUI 内执行菜单操作：清空反馈区 → 将 os.Stdout/color.Output
 // 重定向到反馈区 TextView（os.Pipe + goroutine + QueueUpdateDraw 实时渲染）→
-// 在独立 goroutine 执行 fn → 完成后恢复输出并回调 onDone（刷新列表）。
+// 排队执行 fn（上一个操作未完成时等待）→ 完成后恢复输出并回调 onDone（刷新列表）。
 // 操作全程不退出 TUI，输出实时显示在反馈区；业务函数内的
 // ReadInput/Confirm/MultiSelect 走 TUI 模态输入钩子（事件循环不被阻塞）。
 func runAction(app *tview.Application, feedback *tview.TextView, title string, fn func(), onDone func()) {
-	// 上一个操作还在执行时忽略本次选择（避免并发替换 os.Stdout）
-	if !runActionMu.TryLock() {
-		app.QueueUpdateDraw(func() {
-			fmt.Fprintf(tview.ANSIWriter(feedback), "[yellow]上一操作执行中，请等待完成[-]\n")
-			feedback.ScrollToEnd()
-		})
-		return
-	}
+	// 上一个操作未完成时：排队等待（在 goroutine 里 Lock，不阻塞事件循环），
+	// 保证操作不丢失、不出现"看似卡死"的静默拒绝
+	go func() {
+		runActionMu.Lock()
+		defer runActionMu.Unlock()
+		executeAction(app, feedback, title, fn, onDone)
+	}()
+}
+
+// executeAction 实际执行操作（需已持有 runActionMu）：输出重定向 + 异步执行 + 恢复。
+func executeAction(app *tview.Application, feedback *tview.TextView, title string, fn func(), onDone func()) {
 	// 清空反馈区并写标题
 	feedback.Clear()
 	feedback.SetText("")
@@ -639,13 +641,10 @@ func runAction(app *tview.Application, feedback *tview.TextView, title string, f
 	if err != nil {
 		// 重定向失败（极端情况）则直接在反馈区写提示
 		fmt.Fprintf(tview.ANSIWriter(feedback), "[red]输出重定向失败: %v[-]\n", err)
-		go func() {
-			defer runActionMu.Unlock()
-			fn()
-			if onDone != nil {
-				app.QueueUpdateDraw(onDone)
-			}
-		}()
+		fn()
+		if onDone != nil {
+			app.QueueUpdateDraw(onDone)
+		}
 		return
 	}
 	oldOut, oldColor := os.Stdout, color.Output
@@ -670,26 +669,21 @@ func runAction(app *tview.Application, feedback *tview.TextView, title string, f
 		}
 	}()
 
-	// 执行操作（独立 goroutine，避免阻塞 tview 事件循环——
-	// 操作内的 ReadInput/Confirm 模态钩子需事件循环响应按钮事件）
-	go func() {
-		// fn panic 时也要恢复输出、释放锁（避免锁泄漏 + 全局 stdout 残留 pipe）
-		defer func() {
-			os.Stdout = oldOut
-			color.Output = oldColor
-			w.Close()
-			<-done
-			r.Close()
-			runActionMu.Unlock()
-			app.QueueUpdateDraw(func() {
-				feedback.ScrollToEnd()
-				if onDone != nil {
-					onDone()
-				}
-			})
-		}()
-		fn()
+	// 执行操作（当前 goroutine 已持锁，fn 内模态钩子经事件循环响应）
+	defer func() {
+		os.Stdout = oldOut
+		color.Output = oldColor
+		w.Close()
+		<-done
+		r.Close()
+		app.QueueUpdateDraw(func() {
+			feedback.ScrollToEnd()
+			if onDone != nil {
+				onDone()
+			}
+		})
 	}()
+	fn()
 }
 
 // registerTUIInputHooks 注册 TUI 模态输入钩子并把模态层设为应用根：
@@ -724,6 +718,9 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		}
 		modal.SetRect(x, y, w, h)
 		app.QueueUpdateDraw(func() {
+			// 先清理旧的模态页（防止快速切换时旧 closeModal 误删新模态）
+			pages.RemovePage("modal")
+			pages.RemovePage("overlay")
 			pages.AddPage("overlay", overlay, false, true)
 			pages.AddPage("modal", modal, false, true)
 			app.SetFocus(modal)
@@ -745,7 +742,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		result := make(chan string, 1)
 		currentShow = make(chan struct{})
 		field := tview.NewInputField().
-			SetLabel(prompt + " ").
 			SetText(def)
 		submit := func() {
 			// 与 CLI ReadInput 语义一致：TrimSpace + 空输入返回默认值
@@ -760,16 +756,26 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			result <- def
 			closeModal()
 		}
-		// InputField 回车（DoneFunc）：提交输入
-		field.SetDoneFunc(func(key tcell.Key) {
-			if key == tcell.KeyEnter {
-				submit()
-			}
-		})
-		modal := tview.NewForm().
-			AddFormItem(field).
+		// 提示文本放输入框上方（label 与输入框同行的方案在长标题时表单不可见）
+		label := tview.NewTextView().
+			SetDynamicColors(true).
+			SetText(prompt)
+		buttons := tview.NewForm().
 			AddButton("确定", submit).
 			AddButton("取消", cancel)
+		// InputField 回车（DoneFunc）：提交输入；Tab 切到按钮
+		field.SetDoneFunc(func(key tcell.Key) {
+			switch key {
+			case tcell.KeyEnter:
+				submit()
+			case tcell.KeyTab, tcell.KeyBacktab:
+				app.SetFocus(buttons)
+			}
+		})
+		modal := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(label, 2, 0, false).
+			AddItem(field, 1, 0, true).
+			AddItem(buttons, 3, 0, false)
 		modal.SetBorder(true).SetTitle(" 输入 ")
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc {
@@ -779,7 +785,7 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			return event
 		})
 		// UI 线程执行 AddPage + SetFocus（居中）
-		showModal(modal, 60, 7)
+		showModal(modal, 70, 9)
 		<-currentShow
 		return <-result
 	}
@@ -789,7 +795,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		result := make(chan string, 1)
 		currentShow = make(chan struct{})
 		field := tview.NewInputField().
-			SetLabel(prompt + " ").
 			SetMaskCharacter('*')
 		submit := func() {
 			val := strings.TrimSpace(field.GetText())
@@ -800,16 +805,26 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			result <- ""
 			closeModal()
 		}
-		// InputField 回车（DoneFunc）：提交输入（空值允许，与 CLI ReadPassword 语义一致）
-		field.SetDoneFunc(func(key tcell.Key) {
-			if key == tcell.KeyEnter {
-				submit()
-			}
-		})
-		modal := tview.NewForm().
-			AddFormItem(field).
+		// 提示文本放输入框上方
+		label := tview.NewTextView().
+			SetDynamicColors(true).
+			SetText(prompt)
+		buttons := tview.NewForm().
 			AddButton("确定", submit).
 			AddButton("取消", cancel)
+		// InputField 回车（DoneFunc）：提交输入（空值允许，与 CLI ReadPassword 语义一致）；Tab 切到按钮
+		field.SetDoneFunc(func(key tcell.Key) {
+			switch key {
+			case tcell.KeyEnter:
+				submit()
+			case tcell.KeyTab, tcell.KeyBacktab:
+				app.SetFocus(buttons)
+			}
+		})
+		modal := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(label, 2, 0, false).
+			AddItem(field, 1, 0, true).
+			AddItem(buttons, 3, 0, false)
 		modal.SetBorder(true).SetTitle(" 密码 ")
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc {
@@ -818,7 +833,7 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			}
 			return event
 		})
-		showModal(modal, 60, 7)
+		showModal(modal, 70, 9)
 		<-currentShow
 		return <-result
 	}

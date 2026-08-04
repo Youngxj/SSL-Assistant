@@ -194,7 +194,7 @@ func SetConfig() {
 		ApiUrl = utils.ReadInput("请输入 ApiUrl（例如 http://your-certd-server.com）: ", "")
 		//判断url是否存在http或者https
 		if !strings.HasPrefix(ApiUrl, "http://") && !strings.HasPrefix(ApiUrl, "https://") {
-			fmt.Println("ApiUrl 错误，需包含 http:// or https:// 请重新输入")
+			color.Red("ApiUrl 错误，需包含 http:// or https:// 请重新输入")
 			continue
 		}
 		//去掉结尾的 / 或 \（兼容 https://xxx/、https://xxx\、https://xxx// 等写法）
@@ -203,7 +203,7 @@ func SetConfig() {
 	}
 	err := config.SetConfig(rootName, "api_url", ApiUrl)
 	if err != nil {
-		fmt.Println("保存 api_url 失败:", err)
+		color.Red("保存 api_url 失败: %v", err)
 		return
 	}
 
@@ -211,7 +211,7 @@ func SetConfig() {
 	KeyId := utils.ReadInput("请输入 KeyId: ", "")
 	err = config.SetConfig(rootName, "key_id", KeyId)
 	if err != nil {
-		fmt.Println("保存 key_id 失败:", err)
+		color.Red("保存 key_id 失败: %v", err)
 		return
 	}
 
@@ -219,7 +219,7 @@ func SetConfig() {
 	KeySecret := utils.ReadPassword("请输入 KeySecret: ")
 	err = config.SetConfig(rootName, "key_secret", KeySecret)
 	if err != nil {
-		fmt.Println("保存 key_secret 失败:", err)
+		color.Red("保存 key_secret 失败: %v", err)
 		return
 	}
 
@@ -230,21 +230,21 @@ func SetConfig() {
 	}
 	err = config.SetConfig(rootName, "auto_apply", applyVal)
 	if err != nil {
-		fmt.Println("保存 auto_apply 失败:", err)
+		color.Red("保存 auto_apply 失败: %v", err)
 		return
 	}
 
 	tplID := utils.ReadInput("自动申请参数模版ID（可选，留空使用默认）: ", "")
 	err = config.SetConfig(rootName, "auto_apply_template_id", tplID)
 	if err != nil {
-		fmt.Println("保存 auto_apply_template_id 失败:", err)
+		color.Red("保存 auto_apply_template_id 失败: %v", err)
 		return
 	}
 
 	renewDays := utils.ReadInput("自动申请提前更新天数（默认10，建议与本地提前更新天数一致）: ", "10")
 	err = config.SetConfig(rootName, "auto_apply_renew_days", renewDays)
 	if err != nil {
-		fmt.Println("保存 auto_apply_renew_days 失败:", err)
+		color.Red("保存 auto_apply_renew_days 失败: %v", err)
 		return
 	}
 }

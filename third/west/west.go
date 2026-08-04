@@ -39,7 +39,7 @@ func SetConfig() {
 	username := utils.ReadInput("请输入 username（西部数码用户名）: ", "")
 	err := config.SetConfig(rootName, "username", username)
 	if err != nil {
-		fmt.Println("保存 username 失败:", err)
+		color.Red("保存 username 失败: %v", err)
 		return
 	}
 
@@ -47,7 +47,7 @@ func SetConfig() {
 	apiKey := utils.ReadPassword("请输入 apiKey（SSL证书API密钥）: ")
 	err = config.SetConfig(rootName, "api_key", apiKey)
 	if err != nil {
-		fmt.Println("保存 api_key 失败:", err)
+		color.Red("保存 api_key 失败: %v", err)
 		return
 	}
 
@@ -102,12 +102,12 @@ func GetCert(domain string) (error, []byte, []byte, []byte) {
 		if err != nil {
 			return fmt.Errorf("保存文件失败: %s\n", err), nil, nil, nil
 		}
-		fmt.Println("ZIP文件下载成功")
+		color.Green("ZIP文件下载成功")
 		err, crt, pem, key := extractCertFiles(fileName)
 		if err != nil {
 			return fmt.Errorf("证书信息读取失败: %s\n", err), nil, nil, nil
 		}
-		fmt.Println("证书信息读取成功")
+		color.Green("证书信息读取成功")
 		return err, crt, pem, key
 	default:
 		// 未知类型
