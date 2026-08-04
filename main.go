@@ -854,18 +854,21 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		result := make(chan []int, 1)
 		currentShow = make(chan struct{})
 		selected := make([]bool, len(items))
-		list := tview.NewList()
+		list := tview.NewList().
+			SetHighlightFullLine(true).
+			SetWrapAround(false)
 		for _, item := range items {
+			// main = 勾选标记 + 项目名；secondary = 副文本（可留空）
 			list.AddItem("[ ] "+item, "", 0, nil)
 		}
-		// 切换勾选状态并刷新列表项文本
+		// 切换勾选状态并刷新列表项（✓ 已选 / 空格 未选，secondary 标注已选）
 		toggle := func(idx int) {
 			selected[idx] = !selected[idx]
-			mark := " "
 			if selected[idx] {
-				mark = "x"
+				list.SetItemText(idx, "[✓] "+items[idx], "已选")
+			} else {
+				list.SetItemText(idx, "[ ] "+items[idx], "")
 			}
-			list.SetItemText(idx, "["+mark+"] "+items[idx], "")
 		}
 		confirm := func() {
 			var out []int
