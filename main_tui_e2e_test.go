@@ -367,3 +367,36 @@ func TestSetConfigPrefill(t *testing.T) {
 		t.Errorf("west api_key 留空应保留原值，实际 %q", apiKey)
 	}
 }
+
+// TestModifyExpirationDayBothConfigs：修改提前更新天数同时管理本地与 certd 两个天数
+// （复现：初始化 certd 设 13、本地 12，修改时应分别读到 12/13）
+func TestModifyExpirationDayBothConfigs(t *testing.T) {
+	tmp := t.TempDir()
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	_ = config.InitConfig()
+	_ = config.SetConfig("", "before_expiration_day", "12")
+	_ = config.SetConfig("third.certd", "api_url", "https://x.com")
+	_ = config.SetConfig("third.certd", "auto_apply_renew_days", "13")
+
+	defs := []string{}
+	utils.TUIReadInput = func(prompt, def string) string {
+		defs = append(defs, def)
+		return def
+	}
+	defer func() { utils.TUIReadInput = nil }()
+
+	_ = modifyExpirationDay()
+	if len(defs) < 2 {
+		t.Fatalf("应读取本地+certd 两个天数，实际预填: %v", defs)
+	}
+	if defs[0] != "12" {
+		t.Errorf("本地天数预填应为 12，实际 %q", defs[0])
+	}
+	if defs[1] != "13" {
+		t.Errorf("certd 天数预填应为 13，实际 %q", defs[1])
+	}
+}

@@ -1156,15 +1156,27 @@ func modifyRestartCmd() error {
 }
 
 // 修改过期前检查天数
+// 同时展示/修改两个天数：
+//   - before_expiration_day：本地证书更新判断（到期前 N 天更新证书文件）
+//   - certd auto_apply_renew_days：certd 自动申请续期天数（若配置了 certd）
 func modifyExpirationDay() error {
 	ExpirationDay, _ := config.GetConfig("", "before_expiration_day")
-	fmt.Printf("当前过期前天数: %s\n", color.CyanString(ExpirationDay))
+	certdRenew, _ := config.GetConfig("third.certd", "auto_apply_renew_days")
+	if certdRenew == "" {
+		certdRenew = strconv.Itoa(int(defaultBeforeExpirationDay))
+	}
+
+	fmt.Printf("本地证书提前更新天数: %s\n", color.CyanString(ExpirationDay))
+	if ExpirationDay != "" && certdRenew != "" {
+		fmt.Printf("certd 自动申请续期天数: %s（可一并修改，直接回车保持）\n", color.CyanString(certdRenew))
+	}
+
 	// 默认值取当前配置（未配置时回退默认天数），避免每次重输
 	def := strconv.Itoa(int(defaultBeforeExpirationDay))
 	if strings.TrimSpace(ExpirationDay) != "" {
 		def = ExpirationDay
 	}
-	newDay, err := strconv.Atoi(utils.ReadInput(fmt.Sprintf("请输入新的过期前天数(如: %s): ", def), def))
+	newDay, err := strconv.Atoi(utils.ReadInput(fmt.Sprintf("请输入新的本地证书提前更新天数(如: %s): ", def), def))
 	if err != nil || newDay <= 0 {
 		// 非法输入或 0 天时回退默认值，与旧逻辑保持一致
 		newDay = int(defaultBeforeExpirationDay)
@@ -1173,7 +1185,21 @@ func modifyExpirationDay() error {
 	if err != nil {
 		return fmt.Errorf("保存过期前天数失败: %s", err)
 	}
-	color.Green("过期前天数已修改成: %s", color.CyanString(strconv.Itoa(newDay)))
+
+	// certd 天数：已配置 certd 时一并修改（保持同步），否则跳过
+	certdAPI, _ := config.GetConfig("third.certd", "api_url")
+	if certdAPI != "" {
+		newCertd := utils.ReadInput(fmt.Sprintf("请输入 certd 自动申请续期天数(如: %s): ", certdRenew), certdRenew)
+		if n, aerr := strconv.Atoi(newCertd); aerr == nil && n > 0 {
+			if err := config.SetConfig("third.certd", "auto_apply_renew_days", strconv.Itoa(n)); err != nil {
+				color.Yellow("保存 certd 自动申请续期天数失败: %v\n", err)
+			} else {
+				color.Green("certd 自动申请续期天数已修改成: %d\n", n)
+			}
+		}
+	}
+
+	color.Green("本地证书提前更新天数已修改成: %d\n", newDay)
 	return nil
 }
 
