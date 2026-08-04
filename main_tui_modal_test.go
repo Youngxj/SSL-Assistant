@@ -267,3 +267,109 @@ func TestTUIModalPasswordEmptyEnter(t *testing.T) {
 		t.Fatal("应用未退出")
 	}
 }
+
+// TestTUIModalConfirm：确认框——默认焦点在"是"，Enter 返回 true（所见即所得）
+func TestTUIModalConfirmYes(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan bool, 1)
+	go func() {
+		result <- utils.Confirm("确认删除证书?")
+	}()
+
+	runDone := make(chan struct{})
+	go func() {
+		_ = app.Run()
+		close(runDone)
+	}()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("确认框未弹出")
+		}
+		// 默认焦点"是"，回车返回 true
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+
+	select {
+	case v := <-result:
+		if !v {
+			t.Error("确认框 Enter 应返回 true（默认焦点是）")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("确认框超时")
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}
+
+// TestTUIModalConfirmNo：确认框——Tab 切到"否"后 Enter 返回 false（所见即所得）
+func TestTUIModalConfirmNo(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan bool, 1)
+	go func() {
+		result <- utils.Confirm("确认删除证书?")
+	}()
+
+	runDone := make(chan struct{})
+	go func() {
+		_ = app.Run()
+		close(runDone)
+	}()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("确认框未弹出")
+		}
+		// Tab 切到"否"按钮，回车返回 false
+		sim.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+		time.Sleep(100 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+
+	select {
+	case v := <-result:
+		if v {
+			t.Error("Tab 到否后 Enter 应返回 false（所见即所得）")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("确认框超时")
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 var Version string
@@ -303,89 +305,92 @@ func runInteractiveMenu() {
 	// 状态/提示区
 	status := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
-		SetText("←/→/↑/↓ 移动  回车执行   ESC 退出")
+		SetText("←/→/↑/↓ 移动  回车执行   ESC 退出   （操作中 ESC 为取消输入）")
 
-	// 菜单：Table 单元格平铺（方向键导航由 tview 原生支持）
+	// 菜单：Table 单元格平铺（方向键导航由 tview 原生支持），带边框与标题保持三区视觉统一
 	menu := tview.NewTable().
 		SetSelectable(true, true).
-		SetSelectedFunc(func(row, col int) {
-			idx := row*menuCols + col
-			if idx < 0 || idx >= len(items) {
-				return
-			}
-			if idx == viewTaskIdx {
-				runAction(app, feedback, "查看任务", func() {
-					if err := initGuide(true); err != nil {
-						return
-					}
-					cPid := checkTask()
-					if cPid == "" {
-						color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
-					} else {
-						color.Green("当前任务PID: %s", cPid)
-					}
-				}, refreshCertTable)
-				return
-			}
-			switch idx {
-			case 0:
-				runAction(app, feedback, "初始化程序", initConfig, refreshCertTable)
-			case 1:
-				runAction(app, feedback, "添加证书", func() { _ = addCertificate() }, refreshCertTable)
-			case 2:
-				runAction(app, feedback, "删除证书", func() { _ = deleteCertificate() }, refreshCertTable)
-			case 3:
-				runAction(app, feedback, "更新证书", func() { _ = updateCertificates() }, refreshCertTable)
-			case 4:
-				runAction(app, feedback, "快速添加域名", func() {
-					if err := initGuide(true); err != nil {
-						return
-					}
-					_ = findNginxPathCmd()
-				}, refreshCertTable)
-			case 5:
-				// Windows 下 cron 常驻进程不适用，引导使用任务计划程序；
-				// Linux 下与 CLI `cron` 一致
-				if runtime.GOOS == "windows" {
-					runAction(app, feedback, "证书更新任务", func() {
-						color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
-					}, refreshCertTable)
-				} else {
-					runAction(app, feedback, "证书更新任务", func() {
-						if err := initGuide(true); err != nil {
-							return
-						}
-						cronTask(false)
-					}, refreshCertTable)
-				}
-			case 6:
-				runAction(app, feedback, "修改密钥", modifyKey, refreshCertTable)
-			case 7:
-				runAction(app, feedback, "修改重载命令", func() { _ = modifyRestartCmd() }, refreshCertTable)
-			case 8:
-				runAction(app, feedback, "修改提前更新天数", func() { _ = modifyExpirationDay() }, refreshCertTable)
-			case 9:
-				runAction(app, feedback, "查看配置信息", func() { _ = getConfigInfo() }, refreshCertTable)
-			case 10:
-				runAction(app, feedback, "显示版本信息", func() {
-					fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
-				}, refreshCertTable)
-			case 11:
-				runAction(app, feedback, "检查更新", func() { _ = checkUpdate() }, refreshCertTable)
-			default:
-				// "退出"（index 12，两平台固定）与 Linux 的"查看任务"（已在上方处理）
-				if items[idx] == "退出" {
-					app.Stop()
+		SetBorders(false)
+	menu.SetBorder(true).SetTitle(" 操作菜单 ")
+	menu.SetSelectedFunc(func(row, col int) {
+		idx := row*menuCols + col
+		if idx < 0 || idx >= len(items) {
+			return
+		}
+		if idx == viewTaskIdx {
+			runAction(app, feedback, "查看任务", func() {
+				if err := initGuide(true); err != nil {
 					return
 				}
-				color.Yellow("已取消\n")
+				cPid := checkTask()
+				if cPid == "" {
+					color.Red("任务不存在，可以通过命令添加任务：./SSL-Assistant cron &")
+				} else {
+					color.Green("当前任务PID: %s", cPid)
+				}
+			}, nil) // 只读操作不刷新证书列表
+			return
+		}
+		switch idx {
+		case 0:
+			runAction(app, feedback, "初始化程序", initConfig, refreshCertTable)
+		case 1:
+			runAction(app, feedback, "添加证书", func() { _ = addCertificate() }, refreshCertTable)
+		case 2:
+			runAction(app, feedback, "删除证书", func() { _ = deleteCertificate() }, refreshCertTable)
+		case 3:
+			runAction(app, feedback, "更新证书", func() { _ = updateCertificates() }, refreshCertTable)
+		case 4:
+			runAction(app, feedback, "快速添加域名", func() {
+				// 与"添加证书/删除证书/更新证书"一致：未初始化时自动初始化（initGuide(false)）
+				if err := initGuide(false); err != nil {
+					return
+				}
+				_ = findNginxPathCmd()
+			}, refreshCertTable)
+		case 5:
+			// Windows 下 cron 常驻进程不适用，引导使用任务计划程序；
+			// Linux 下与 CLI `cron` 一致
+			if runtime.GOOS == "windows" {
+				runAction(app, feedback, "证书更新任务", func() {
+					color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
+				}, refreshCertTable)
+			} else {
+				runAction(app, feedback, "证书更新任务", func() {
+					if err := initGuide(true); err != nil {
+						return
+					}
+					cronTask(false)
+				}, refreshCertTable)
 			}
-		})
+		case 6:
+			runAction(app, feedback, "修改密钥", modifyKey, refreshCertTable)
+		case 7:
+			runAction(app, feedback, "修改重载命令", func() { _ = modifyRestartCmd() }, refreshCertTable)
+		case 8:
+			runAction(app, feedback, "修改提前更新天数", func() { _ = modifyExpirationDay() }, refreshCertTable)
+		case 9:
+			runAction(app, feedback, "查看配置信息", func() { _ = getConfigInfo() }, nil) // 只读
+		case 10:
+			runAction(app, feedback, "显示版本信息", func() {
+				fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
+			}, nil) // 只读
+		case 11:
+			runAction(app, feedback, "检查更新", func() { _ = checkUpdate() }, nil) // 只读
+		default:
+			// "退出"（index 12，两平台固定）与 Linux 的"查看任务"（已在上方处理）
+			if items[idx] == "退出" {
+				app.Stop()
+				return
+			}
+			color.Yellow("已取消\n")
+		}
+	})
 	// 平铺菜单：按终端宽度计算列数（初始 80 列，tview 启动后再按实际宽度重排）
 	menuCols = computeMenuCols(items, 80)
-	// 菜单平铺行数（用于 Flex 布局固定高度）
+	// 菜单平铺行数 + 上下边框 2 行（用于 Flex 布局固定高度）
 	menuRows := func() int {
-		return (len(items) + menuCols - 1) / menuCols
+		return (len(items)+menuCols-1)/menuCols + 2
 	}
 
 	// 布局：标题 + 证书列表（弹性）+ 反馈（弹性）+ 菜单（固定高度）+ 状态
@@ -593,25 +598,64 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 	pages := tview.NewPages()
 	pages.AddPage("main", root, true, true)
 
+	// 当前模态的 show 通道（钩子内等待 UI 线程完成 AddPage）
+	var currentShow chan struct{}
+
+	// 遮罩 + 居中模态：modal 页之上叠加遮罩，modal 居中显示。
+	// resize=false 让 SetRect 生效（AddPage resize=true 会撑满容器覆盖 SetRect）。
+	showModal := func(modal tview.Primitive, w, h int) {
+		// 遮罩页（全屏，深色背景）
+		overlay := tview.NewBox().SetBackgroundColor(tcell.ColorBlue)
+		// 计算居中位置（按终端尺寸；模拟屏测试下回退 80x24）
+		screenW, screenH := 80, 24
+		if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 0 && th > 0 {
+			screenW, screenH = tw, th
+		}
+		x := (screenW - w) / 2
+		if x < 0 {
+			x = 0
+		}
+		y := (screenH - h) / 2
+		if y < 0 {
+			y = 0
+		}
+		modal.SetRect(x, y, w, h)
+		app.QueueUpdateDraw(func() {
+			pages.AddPage("overlay", overlay, false, true)
+			pages.AddPage("modal", modal, false, true)
+			app.SetFocus(modal)
+			close(currentShow)
+		})
+	}
+
+	// 关闭模态：移除 modal 与遮罩，回到主页面
+	closeModal := func() {
+		pages.RemovePage("modal")
+		pages.RemovePage("overlay")
+		pages.SwitchToPage("main")
+		app.SetFocus(root)
+	}
+
 	// 模态输入框：阻塞等待用户输入，返回结果
 	// 注意：钩子在业务 goroutine 调用，pages 操作必须经 QueueUpdateDraw 在 UI 线程执行
 	utils.TUIReadInput = func(prompt, def string) string {
 		result := make(chan string, 1)
-		show := make(chan struct{})
+		currentShow = make(chan struct{})
 		field := tview.NewInputField().
 			SetLabel(prompt + " ").
 			SetText(def)
 		submit := func() {
-			result <- field.GetText()
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			// 与 CLI ReadInput 语义一致：TrimSpace + 空输入返回默认值
+			v := strings.TrimSpace(field.GetText())
+			if v == "" {
+				v = def
+			}
+			result <- v
+			closeModal()
 		}
 		cancel := func() {
 			result <- def
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		// InputField 回车（DoneFunc）：提交输入
 		field.SetDoneFunc(func(key tcell.Key) {
@@ -624,7 +668,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			AddButton("确定", submit).
 			AddButton("取消", cancel)
 		modal.SetBorder(true).SetTitle(" 输入 ")
-		modal.SetRect(0, 0, 60, 7)
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc {
 				cancel()
@@ -632,35 +675,27 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			}
 			return event
 		})
-		// UI 线程执行 AddPage + SetFocus
-		app.QueueUpdateDraw(func() {
-			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(field)
-			close(show)
-		})
-		<-show
+		// UI 线程执行 AddPage + SetFocus（居中）
+		showModal(modal, 60, 7)
+		<-currentShow
 		return <-result
 	}
 
 	// 密码输入框（不回显，掩码 * 显示）——初始化/修改密钥的平台密钥
 	utils.TUIReadPassword = func(prompt string) string {
 		result := make(chan string, 1)
-		show := make(chan struct{})
+		currentShow = make(chan struct{})
 		field := tview.NewInputField().
 			SetLabel(prompt + " ").
 			SetMaskCharacter('*')
 		submit := func() {
 			val := strings.TrimSpace(field.GetText())
 			result <- val
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		cancel := func() {
 			result <- ""
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		// InputField 回车（DoneFunc）：提交输入（空值允许，与 CLI ReadPassword 语义一致）
 		field.SetDoneFunc(func(key tcell.Key) {
@@ -673,7 +708,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			AddButton("确定", submit).
 			AddButton("取消", cancel)
 		modal.SetBorder(true).SetTitle(" 密码 ")
-		modal.SetRect(0, 0, 60, 7)
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc {
 				cancel()
@@ -681,64 +715,52 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			}
 			return event
 		})
-		app.QueueUpdateDraw(func() {
-			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(field)
-			close(show)
-		})
-		<-show
+		showModal(modal, 60, 7)
+		<-currentShow
 		return <-result
 	}
 
 	// 确认框
 	utils.TUIConfirm = func(prompt string) bool {
 		result := make(chan bool, 1)
-		show := make(chan struct{})
+		currentShow = make(chan struct{})
 		text := tview.NewTextView().
 			SetDynamicColors(true).
 			SetText(prompt)
 		yes := func() {
 			result <- true
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		no := func() {
 			result <- false
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
-		modal := tview.NewForm().
-			AddFormItem(text).
-			AddButton("是 (Y)", yes).
-			AddButton("否 (N)", no)
+		// Flex 组合：提示文本 + 按钮（避免 Form.AddFormItem(TextView) 的 GetFieldHeight=0 布局问题）
+		buttons := tview.NewForm().
+			AddButton("是", yes).
+			AddButton("否", no)
+		modal := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(text, 2, 0, false).
+			AddItem(buttons, 3, 0, true) // focus=true：Enter 由按钮响应
 		modal.SetBorder(true).SetTitle(" 确认 ")
-		modal.SetRect(0, 0, 60, 5)
+		// 注意：不拦截 Enter——回车由当前聚焦按钮自然响应（所见即所得），
+		// 避免"高亮否按钮却执行是"的陷阱；ESC 统一为取消（否）
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEnter {
-				yes()
-				return nil
-			}
 			if event.Key() == tcell.KeyEsc {
 				no()
 				return nil
 			}
 			return event
 		})
-		app.QueueUpdateDraw(func() {
-			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(modal)
-			close(show)
-		})
-		<-show
+		showModal(modal, 60, 8)
+		<-currentShow
 		return <-result
 	}
 
-	// 多选列表（快速添加域名站点勾选）：Flex 组合 List + 按钮
+	// 多选列表（快速添加域名站点勾选）：Flex 组合 List + 按钮 + 提示
 	utils.TUIMultiSelect = func(items []string, prompt string) []int {
 		result := make(chan []int, 1)
-		show := make(chan struct{})
+		currentShow = make(chan struct{})
 		selected := make([]bool, len(items))
 		list := tview.NewList()
 		for i, item := range items {
@@ -760,15 +782,11 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 				}
 			}
 			result <- out
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		cancel := func() {
 			result <- nil
-			pages.RemovePage("modal")
-			pages.SwitchToPage("main")
-			app.SetFocus(root)
+			closeModal()
 		}
 		// 列表高度自适应（最多 12 行，最少 5 行）
 		listH := len(items) + 2
@@ -778,14 +796,19 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		if listH > 12 {
 			listH = 12
 		}
+		// 操作提示行（与 CLI multiSelect 一致）
+		hint := tview.NewTextView().
+			SetDynamicColors(true).
+			SetTextAlign(tview.AlignCenter).
+			SetText("[yellow]回车勾选/取消，Tab 切换按钮，ESC 取消[-]")
 		buttons := tview.NewForm().
 			AddButton("确认", confirm).
 			AddButton("取消", cancel)
 		modal := tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(list, listH, 0, true).
+			AddItem(hint, 1, 0, false).
 			AddItem(buttons, 3, 0, false)
 		modal.SetBorder(true).SetTitle(" " + prompt + " ")
-		modal.SetRect(0, 0, 80, listH+5)
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc {
 				cancel()
@@ -793,12 +816,8 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			}
 			return event
 		})
-		app.QueueUpdateDraw(func() {
-			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(list)
-			close(show)
-		})
-		<-show
+		showModal(modal, 80, listH+6)
+		<-currentShow
 		return <-result
 	}
 
