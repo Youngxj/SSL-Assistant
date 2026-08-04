@@ -698,7 +698,7 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 	// 当前模态的 show 通道（钩子内等待 UI 线程完成 AddPage）
 	var currentShow chan struct{}
 
-	// 遮罩 + 居中模态：modal 页之上叠加遮罩，modal 居中显示。
+	// 居中模态：modal 直接叠加在主界面上（不加深色遮罩，保持界面透亮）。
 	// resize=false 让 SetRect 生效（AddPage resize=true 会撑满容器覆盖 SetRect）。
 	showModal := func(modal tview.Primitive, w, h int) {
 		// 计算屏幕尺寸（按终端尺寸；模拟屏测试下回退 80x24）
@@ -706,9 +706,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 0 && th > 0 {
 			screenW, screenH = tw, th
 		}
-		// 遮罩页：显式撑满全屏（NewBox 默认 15x10 位于左上角，不 SetRect 会画成蓝色小块）
-		overlay := tview.NewBox().SetBackgroundColor(tcell.ColorBlue)
-		overlay.SetRect(0, 0, screenW, screenH)
 		x := (screenW - w) / 2
 		if x < 0 {
 			x = 0
@@ -721,18 +718,15 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		app.QueueUpdateDraw(func() {
 			// 先清理旧的模态页（防止快速切换时旧 closeModal 误删新模态）
 			pages.RemovePage("modal")
-			pages.RemovePage("overlay")
-			pages.AddPage("overlay", overlay, false, true)
 			pages.AddPage("modal", modal, false, true)
 			app.SetFocus(modal)
 			close(currentShow)
 		})
 	}
 
-	// 关闭模态：移除 modal 与遮罩，回到主页面
+	// 关闭模态：移除模态页，回到主页面
 	closeModal := func() {
 		pages.RemovePage("modal")
-		pages.RemovePage("overlay")
 		pages.SwitchToPage("main")
 		app.SetFocus(root)
 	}

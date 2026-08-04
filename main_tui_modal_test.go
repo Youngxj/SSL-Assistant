@@ -578,9 +578,8 @@ func TestWrappedLineCount(t *testing.T) {
 	}
 }
 
-// TestModalOverlayFullscreen：模态遮罩应撑满全屏（NewBox 默认 15x10 在左上角，
-// 若不 SetRect 会画成蓝色小块——回归测试）
-func TestModalOverlayFullscreen(t *testing.T) {
+// TestModalNoBlueOverlay：模态不再使用蓝色遮罩——模态正常弹出且无大面积蓝底
+func TestModalNoBlueOverlay(t *testing.T) {
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {
 		t.Fatalf("模拟屏幕初始化失败: %v", err)
@@ -600,6 +599,9 @@ func TestModalOverlayFullscreen(t *testing.T) {
 	go func() { _ = app.Run(); close(runDone) }()
 	go func() {
 		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("模态未弹出")
+		}
 		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 	}()
 	select {
@@ -608,6 +610,7 @@ func TestModalOverlayFullscreen(t *testing.T) {
 		t.Fatal("模态输入超时")
 	}
 
+	// 无蓝色遮罩：蓝底 cell 数应很少（仅偶然的颜色残影，远小于全屏遮罩）
 	cells, _, _ := sim.GetContents()
 	blueCount := 0
 	for _, c := range cells {
@@ -616,8 +619,8 @@ func TestModalOverlayFullscreen(t *testing.T) {
 			blueCount++
 		}
 	}
-	if blueCount < 1000 {
-		t.Errorf("遮罩应撑满全屏（蓝底 >1000 cell），实际 %d——疑似左上角小块", blueCount)
+	if blueCount > 500 {
+		t.Errorf("不应有蓝色遮罩（蓝底 %d cell > 500）", blueCount)
 	}
 
 	app.Stop()
