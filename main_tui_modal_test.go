@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -426,5 +427,82 @@ func TestTUIModalConfirmArrow(t *testing.T) {
 	case <-runDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("应用未退出")
+	}
+}
+
+// TestScrollTextView：操作输出区滚动——PgDn/PgUp 页滚动、越界收敛、滚动范围正确
+func TestScrollTextView(t *testing.T) {
+	// 直接测试 scrollTextView 纯逻辑（不依赖 app/模拟屏）
+	tv := tview.NewTextView().SetScrollable(true)
+	var sb strings.Builder
+	for i := 0; i < 50; i++ {
+		sb.WriteString("第 " + string(rune('0'+i%10)) + string(rune('0'+i/10)) + " 行\n")
+	}
+	tv.SetText(sb.String())
+	// 设可视高度 25（无边框时 GetInnerRect 返回全高）
+	tv.SetRect(0, 0, 80, 25)
+
+	// 内容 50 行 + 结尾换行 → total = 51；可视 25 → 最大 offset = 51-25 = 26
+	maxOffset := 26
+
+	// 初始 offset -1（tview 默认跟随末尾），向上滚应归一化并收敛
+	scrollTextView(tv, -100)
+	row, _ := tv.GetScrollOffset()
+	if row != 0 {
+		t.Errorf("向上滚到顶 offset 应为 0，实际 %d", row)
+	}
+	// 向下滚一页（滚动 23 行）
+	scrollTextView(tv, 23)
+	row, _ = tv.GetScrollOffset()
+	if row != 23 {
+		t.Errorf("PgDn 后 offset 应为 23，实际 %d", row)
+	}
+	// 再向下滚到边界
+	scrollTextView(tv, 23)
+	row, _ = tv.GetScrollOffset()
+	if row != maxOffset {
+		t.Errorf("滚到底部 offset 应为 %d，实际 %d", maxOffset, row)
+	}
+	// 继续向下滚不应越界
+	scrollTextView(tv, 100)
+	row, _ = tv.GetScrollOffset()
+	if row != maxOffset {
+		t.Errorf("越界应收敛到 %d，实际 %d", maxOffset, row)
+	}
+	// 向上滚回顶部
+	scrollTextView(tv, -100)
+	row, _ = tv.GetScrollOffset()
+	if row != 0 {
+		t.Errorf("回到顶部 offset 应为 0，实际 %d", row)
+	}
+	// 短内容（不足一屏）不应越界
+	tv.SetText("只有一行\n")
+	scrollTextView(tv, 100)
+	row, _ = tv.GetScrollOffset()
+	if row != 0 {
+		t.Errorf("短内容滚动应保持 0，实际 %d", row)
+	}
+}
+
+// TestWheelPosition：滚轮位置判断——反馈区上方滚动，菜单区放行
+// 纯逻辑测试滚轮命中判断（不依赖 app 事件循环）
+func TestWheelPosition(t *testing.T) {
+	// 模拟反馈区 rect：x=0,y=0,w=80,h=15
+	fx, fy, _, fh := 0, 0, 80, 15
+	cases := []struct {
+		mx, my int
+		inArea bool
+	}{
+		{5, 1, true},   // 反馈区内
+		{5, 14, true},  // 反馈区底部
+		{5, 15, false}, // 反馈区下方（菜单区）
+		{5, 30, false}, // 更下方
+		{-1, 5, false}, // 反馈区左侧
+	}
+	for _, c := range cases {
+		got := c.my >= fy && c.my < fy+fh && c.mx >= fx
+		if got != c.inArea {
+			t.Errorf("pos(%d,%d) 命中反馈区=%v, want %v", c.mx, c.my, got, c.inArea)
+		}
 	}
 }

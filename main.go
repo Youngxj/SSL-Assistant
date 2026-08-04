@@ -305,7 +305,7 @@ func runInteractiveMenu() {
 	// 状态/提示区
 	status := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
-		SetText("←/→/↑/↓ 移动  回车执行   ESC 退出   （操作中 ESC 为取消输入）")
+		SetText("←/→/↑/↓ 移动  回车执行  PgUp/PgDn 滚动输出  ESC 退出   （操作中 ESC 为取消输入）")
 
 	// 菜单：Table 单元格平铺（方向键导航由 tview 原生支持），带边框与标题保持三区视觉统一
 	menu := tview.NewTable().
@@ -442,18 +442,64 @@ func runInteractiveMenu() {
 		return false // 不中断绘制
 	})
 
-	// 菜单获得焦点后 Enter 已由 SetSelectedFunc 处理；ESC 退出
+	// 滚动操作输出区：根据可视高度计算滚动量，供 PgUp/PgDn/Home/End 与鼠标滚轮使用
+	scrollFeedback := func(lines int) {
+		scrollTextView(feedback, lines)
+	}
+	// 页滚动量 = 反馈区可视高度（GetInnerRect 已扣除边框；动态计算避免布局前为 0）
+	pageLines := func() int {
+		_, _, _, vh := feedback.GetInnerRect()
+		if vh < 1 {
+			vh = 1
+		}
+		return vh
+	}
+
+	// 菜单获得焦点后 Enter 已由 SetSelectedFunc 处理；ESC 退出；
+	// PgUp/PgDn/Home/End 用于滚动操作输出区（长内容查看）
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// 模态输入框打开时（业务操作中），ESC 交给模态自己处理（取消输入），
 		// 不退出整个应用
-		if event.Key() == tcell.KeyEsc {
-			if pagesRoot.HasPage("modal") {
-				return event // 让模态的 SetInputCapture 处理
-			}
+		if pagesRoot.HasPage("modal") {
+			return event
+		}
+		switch event.Key() {
+		case tcell.KeyEsc:
 			app.Stop()
+			return nil
+		case tcell.KeyPgUp:
+			scrollFeedback(-pageLines())
+			return nil
+		case tcell.KeyPgDn:
+			scrollFeedback(pageLines())
+			return nil
+		case tcell.KeyHome:
+			feedback.ScrollToBeginning()
+			return nil
+		case tcell.KeyEnd:
+			feedback.ScrollToEnd()
 			return nil
 		}
 		return event
+	})
+
+	// 鼠标滚轮：鼠标在反馈区上方时滚动反馈区；否则放行（证书列表等自行处理）
+	app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
+		if action != tview.MouseScrollUp && action != tview.MouseScrollDown {
+			return event, action
+		}
+		mx, my := event.Position()
+		fx, fy, _, fh := feedback.GetRect()
+		if my >= fy && my < fy+fh && mx >= fx {
+			// 反馈区上方：滚动它
+			if action == tview.MouseScrollUp {
+				scrollFeedback(-3)
+			} else {
+				scrollFeedback(3)
+			}
+			return nil, action
+		}
+		return event, action
 	})
 
 	if err := app.Run(); err != nil {
@@ -464,6 +510,37 @@ func runInteractiveMenu() {
 	utils.TUIConfirm = nil
 	utils.TUIReadPassword = nil
 	utils.TUIMultiSelect = nil
+}
+
+// scrollTextView 滚动 TextView（操作输出区）：根据可视高度计算滚动量，
+// 支持 PgUp/PgDn（页滚动）、Home/End、鼠标滚轮（行滚动）。
+// lines 为正向下滚、为负向上滚；越界自动收敛到边界。
+func scrollTextView(tv *tview.TextView, lines int) {
+	// 内容总行数（GetText(true) 剥掉标签后按换行统计）
+	total := strings.Count(tv.GetText(true), "\n") + 1
+	_, _, _, vh := tv.GetInnerRect()
+	if vh < 1 {
+		vh = 1
+	}
+	row, _ := tv.GetScrollOffset()
+	if row < 0 {
+		// tview 默认 -1 表示"跟随末尾"，归一化为可视区域内（从底部开始）
+		row = total - vh
+		if row < 0 {
+			row = 0
+		}
+	}
+	newRow := row + lines
+	switch {
+	case newRow < 0:
+		newRow = 0
+	case newRow >= total-vh:
+		newRow = total - vh
+		if newRow < 0 {
+			newRow = 0
+		}
+	}
+	tv.ScrollTo(newRow, 0)
 }
 
 // computeMenuCols 按终端宽度与最长菜单项计算平铺列数（至少 1 列）
