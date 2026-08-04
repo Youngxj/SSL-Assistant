@@ -14,6 +14,7 @@ import (
 	"ssl_assistant/third/github"
 	"ssl_assistant/utils"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -647,7 +648,14 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			SetLabel(prompt + " ").
 			SetMaskCharacter('*')
 		submit := func() {
-			result <- field.GetText()
+			val := strings.TrimSpace(field.GetText())
+			if val == "" {
+				// 空密钥不保存：提示重输，模态保持打开（与非 TUI 拒空语义一致）
+				field.SetText("")
+				app.QueueUpdateDraw(func() { app.SetFocus(field) })
+				return
+			}
+			result <- val
 			pages.RemovePage("modal")
 			pages.SwitchToPage("main")
 			app.SetFocus(root)

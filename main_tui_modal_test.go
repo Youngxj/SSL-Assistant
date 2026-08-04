@@ -159,3 +159,59 @@ func TestTUIRunActionOutput(t *testing.T) {
 		t.Fatal("应用未退出")
 	}
 }
+
+// TestTUIModalPassword：验证密码模态（掩码显示）返回输入值
+func TestTUIModalPassword(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan string, 1)
+	go func() {
+		result <- utils.ReadPassword("请输入密钥: ")
+	}()
+
+	runDone := make(chan struct{})
+	go func() {
+		_ = app.Run()
+		close(runDone)
+	}()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("密码模态未弹出")
+		}
+		for _, r := range "secret123" {
+			sim.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			time.Sleep(30 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+
+	select {
+	case v := <-result:
+		if v != "secret123" {
+			t.Errorf("密码模态返回 %q, want %q", v, "secret123")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("密码模态超时")
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}
