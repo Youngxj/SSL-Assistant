@@ -35,16 +35,27 @@ var (
 func SetConfig() {
 	color.Cyan("正在配置West相关参数")
 	var rootName string = "third.west"
-	// 输入userName
-	username := utils.ReadInput("请输入 username（西部数码用户名）: ", "")
+
+	// 读取当前配置（未配置时为空），用于输入框预填
+	curUser, _ := config.GetConfig(rootName, "username")
+	curApiKey, _ := config.GetConfig(rootName, "api_key")
+
+	// 输入userName（预填当前值）
+	username := utils.ReadInput("请输入 username（西部数码用户名）: ", curUser)
 	err := config.SetConfig(rootName, "username", username)
 	if err != nil {
 		color.Red("保存 username 失败: %v", err)
 		return
 	}
 
-	// 输入api_key（不回显）
+	// 输入api_key（不回显，无法预填；当前已有配置时提示留空保留）
+	if curApiKey != "" {
+		color.Yellow("当前已配置 apiKey（留空则不修改，直接回车跳过）\n")
+	}
 	apiKey := utils.ReadPassword("请输入 apiKey（SSL证书API密钥）: ")
+	if apiKey == "" && curApiKey != "" {
+		apiKey = curApiKey // 留空保留原 apiKey
+	}
 	err = config.SetConfig(rootName, "api_key", apiKey)
 	if err != nil {
 		color.Red("保存 api_key 失败: %v", err)

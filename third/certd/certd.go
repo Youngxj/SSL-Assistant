@@ -188,10 +188,21 @@ func loadAutoApplyConfig() (enable bool, templateID int, renewDays int) {
 func SetConfig() {
 	color.Cyan("正在配置Certd相关参数")
 	var rootName string = "third.certd"
+
+	// 读取当前配置（未配置时为空），用于输入框预填
+	curApi, _ := config.GetConfig(rootName, "api_url")
+	curKeyID, _ := config.GetConfig(rootName, "key_id")
+	curApply, _ := config.GetConfig(rootName, "auto_apply")
+	curTplID, _ := config.GetConfig(rootName, "auto_apply_template_id")
+	curRenewDays, _ := config.GetConfig(rootName, "auto_apply_renew_days")
+	if curRenewDays == "" {
+		curRenewDays = "10"
+	}
+
 	var ApiUrl string
 	for {
-		// 输入ApiUrl
-		ApiUrl = utils.ReadInput("请输入 ApiUrl（例如 http://your-certd-server.com）: ", "")
+		// 输入ApiUrl（预填当前值）
+		ApiUrl = utils.ReadInput("请输入 ApiUrl（例如 http://your-certd-server.com）: ", curApi)
 		//判断url是否存在http或者https
 		if !strings.HasPrefix(ApiUrl, "http://") && !strings.HasPrefix(ApiUrl, "https://") {
 			color.Red("ApiUrl 错误，需包含 http:// or https:// 请重新输入")
@@ -207,25 +218,33 @@ func SetConfig() {
 		return
 	}
 
-	// 输入KeyId
-	KeyId := utils.ReadInput("请输入 KeyId: ", "")
+	// 输入KeyId（预填当前值）
+	KeyId := utils.ReadInput("请输入 KeyId: ", curKeyID)
 	err = config.SetConfig(rootName, "key_id", KeyId)
 	if err != nil {
 		color.Red("保存 key_id 失败: %v", err)
 		return
 	}
 
-	// 输入KeySecret（不回显）
+	// 输入KeySecret（不回显，无法预填；当前已有配置时提示留空保留）
+	oldSecret, _ := config.GetConfig(rootName, "key_secret")
+	if oldSecret != "" {
+		color.Yellow("当前已配置 KeySecret（留空则不修改，直接回车跳过）\n")
+	}
 	KeySecret := utils.ReadPassword("请输入 KeySecret: ")
+	if KeySecret == "" && oldSecret != "" {
+		// 留空表示保留原 KeySecret，不覆盖
+		KeySecret = oldSecret
+	}
 	err = config.SetConfig(rootName, "key_secret", KeySecret)
 	if err != nil {
 		color.Red("保存 key_secret 失败: %v", err)
 		return
 	}
 
-	// 自动申请配置（证书不存在时由certd自动创建流水线申请）
+	// 自动申请配置（证书不存在时由certd自动创建流水线申请；预填当前状态）
 	applyVal := "0"
-	if utils.Confirm("证书不存在时是否自动申请（需certd端已配置域名校验）") {
+	if curApply == "1" || utils.Confirm("证书不存在时是否自动申请（需certd端已配置域名校验）") {
 		applyVal = "1"
 	}
 	err = config.SetConfig(rootName, "auto_apply", applyVal)
@@ -234,14 +253,14 @@ func SetConfig() {
 		return
 	}
 
-	tplID := utils.ReadInput("自动申请参数模版ID（可选，留空使用默认）: ", "")
+	tplID := utils.ReadInput("自动申请参数模版ID（可选，留空使用默认）: ", curTplID)
 	err = config.SetConfig(rootName, "auto_apply_template_id", tplID)
 	if err != nil {
 		color.Red("保存 auto_apply_template_id 失败: %v", err)
 		return
 	}
 
-	renewDays := utils.ReadInput("自动申请提前更新天数（默认10，建议与本地提前更新天数一致）: ", "10")
+	renewDays := utils.ReadInput("自动申请提前更新天数（默认10，建议与本地提前更新天数一致）: ", curRenewDays)
 	err = config.SetConfig(rootName, "auto_apply_renew_days", renewDays)
 	if err != nil {
 		color.Red("保存 auto_apply_renew_days 失败: %v", err)

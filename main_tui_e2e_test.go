@@ -11,6 +11,8 @@ import (
 	"github.com/rivo/tview"
 	"ssl_assistant/config"
 	"ssl_assistant/db"
+	certdpkg "ssl_assistant/third/certd"
+	"ssl_assistant/third/west"
 	"ssl_assistant/utils"
 )
 
@@ -309,5 +311,59 @@ func TestGetConfigInfoChinese(t *testing.T) {
 	}
 	if contains(out, "secret123") {
 		t.Errorf("key_secret 应打码")
+	}
+}
+
+// TestSetConfigPrefill：修改密钥（certd/west SetConfig）预填当前配置、密钥留空保留
+func TestSetConfigPrefill(t *testing.T) {
+	tmp := t.TempDir()
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	_ = config.InitConfig()
+	_ = config.SetConfig("third.certd", "api_url", "https://old-certd.com")
+	_ = config.SetConfig("third.certd", "key_id", "old-key-id")
+	_ = config.SetConfig("third.certd", "key_secret", "old-secret")
+	_ = config.SetConfig("third.certd", "auto_apply_template_id", "tpl-9")
+	_ = config.SetConfig("third.certd", "auto_apply_renew_days", "25")
+	_ = config.SetConfig("third.west", "username", "old-user")
+	_ = config.SetConfig("third.west", "api_key", "old-api-key")
+
+	defs := []string{}
+	utils.TUIReadInput = func(prompt, def string) string {
+		defs = append(defs, def)
+		return def
+	}
+	utils.TUIReadPassword = func(prompt string) string { return "" } // 密钥留空
+	utils.TUIConfirm = func(prompt string) bool { return false }
+	defer func() { utils.TUIReadInput, utils.TUIReadPassword, utils.TUIConfirm = nil, nil, nil }()
+
+	certdpkg.SetConfig()
+	// certd 预填：api_url/key_id/tpl/renewDays
+	want := []string{"https://old-certd.com", "old-key-id", "tpl-9", "25"}
+	if len(defs) < len(want) {
+		t.Fatalf("certd 预填次数不足: %v", defs)
+	}
+	for i, w := range want {
+		if defs[i] != w {
+			t.Errorf("certd 预填[%d]=%q, want %q", i, defs[i], w)
+		}
+	}
+	secret, _ := config.GetConfig("third.certd", "key_secret")
+	if secret != "old-secret" {
+		t.Errorf("certd 密钥留空应保留原值，实际 %q", secret)
+	}
+
+	// west：username 预填，api_key 留空保留
+	defs = defs[:0]
+	west.SetConfig()
+	if len(defs) < 1 || defs[0] != "old-user" {
+		t.Errorf("west username 预填应为 old-user，实际 %v", defs)
+	}
+	apiKey, _ := config.GetConfig("third.west", "api_key")
+	if apiKey != "old-api-key" {
+		t.Errorf("west api_key 留空应保留原值，实际 %q", apiKey)
 	}
 }
