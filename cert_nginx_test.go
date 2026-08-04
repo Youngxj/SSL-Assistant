@@ -1,12 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,27 +100,10 @@ func TestExtractCertPathsFromFile(t *testing.T) {
 
 func TestGetCertFileExpireTime(t *testing.T) {
 	dir := t.TempDir()
-	certPath := filepath.Join(dir, "test.pem")
 
 	// 生成 30 天后过期的自签证书
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
+	certPath, _ := genSelfSignedCert(t, dir, "test.com", 30)
 	notAfter := time.Now().Add(30 * 24 * time.Hour)
-	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "test.com"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     notAfter,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
 
 	expire, err := getCertFileExpireTime(certPath)
 	if err != nil {

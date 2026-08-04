@@ -1,56 +1,19 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"os"
 	"path/filepath"
 	"ssl_assistant/db"
 	"strings"
 	"testing"
-	"time"
 )
-
-// genSelfSignedCert 生成自签证书 + 私钥文件
-func genSelfSignedCert(t *testing.T, dir, domain string) (certPath, keyPath string) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: domain},
-		DNSNames:     []string{domain, "www." + domain},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(90 * 24 * time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certPath = filepath.Join(dir, "fullchain.pem")
-	keyPath = filepath.Join(dir, "privkey.pem")
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
-		t.Fatal(err)
-	}
-	keyDER, _ := x509.MarshalPKCS8PrivateKey(key)
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return
-}
 
 // TestBuildCertFromLocalFiles 验证从本地证书文件解析证书信息
 func TestBuildCertFromLocalFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", t.TempDir())
 	dir := t.TempDir()
-	certPath, keyPath := genSelfSignedCert(t, dir, "local-test.com")
+	certPath, keyPath := genSelfSignedCert(t, dir, "local-test.com", 90)
 
 	cert, err := buildCertFromLocalFiles("local-test.com", certPath, keyPath)
 	if err != nil {
@@ -81,7 +44,7 @@ func TestAddSiteFromNginxLocalFallback(t *testing.T) {
 		}
 	})
 	dir := t.TempDir()
-	certPath, keyPath := genSelfSignedCert(t, dir, "local-test.com")
+	certPath, keyPath := genSelfSignedCert(t, dir, "local-test.com", 90)
 
 	site := nginxSite{
 		Domain:   "local-test.com",
