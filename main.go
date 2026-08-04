@@ -613,6 +613,12 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			pages.SwitchToPage("main")
 			app.SetFocus(root)
 		}
+		// InputField 回车（DoneFunc）：提交输入
+		field.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				submit()
+			}
+		})
 		modal := tview.NewForm().
 			AddFormItem(field).
 			AddButton("确定", submit).
@@ -620,10 +626,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		modal.SetBorder(true).SetTitle(" 输入 ")
 		modal.SetRect(0, 0, 60, 7)
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEnter {
-				submit()
-				return nil
-			}
 			if event.Key() == tcell.KeyEsc {
 				cancel()
 				return nil
@@ -633,7 +635,7 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		// UI 线程执行 AddPage + SetFocus
 		app.QueueUpdateDraw(func() {
 			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(modal)
+			app.SetFocus(field)
 			close(show)
 		})
 		<-show
@@ -649,12 +651,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			SetMaskCharacter('*')
 		submit := func() {
 			val := strings.TrimSpace(field.GetText())
-			if val == "" {
-				// 空密钥不保存：提示重输，模态保持打开（与非 TUI 拒空语义一致）
-				field.SetText("")
-				app.QueueUpdateDraw(func() { app.SetFocus(field) })
-				return
-			}
 			result <- val
 			pages.RemovePage("modal")
 			pages.SwitchToPage("main")
@@ -666,6 +662,12 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			pages.SwitchToPage("main")
 			app.SetFocus(root)
 		}
+		// InputField 回车（DoneFunc）：提交输入（空值允许，与 CLI ReadPassword 语义一致）
+		field.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				submit()
+			}
+		})
 		modal := tview.NewForm().
 			AddFormItem(field).
 			AddButton("确定", submit).
@@ -673,10 +675,6 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		modal.SetBorder(true).SetTitle(" 密码 ")
 		modal.SetRect(0, 0, 60, 7)
 		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEnter {
-				submit()
-				return nil
-			}
 			if event.Key() == tcell.KeyEsc {
 				cancel()
 				return nil
@@ -685,7 +683,7 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		})
 		app.QueueUpdateDraw(func() {
 			pages.AddPage("modal", modal, true, true)
-			app.SetFocus(modal)
+			app.SetFocus(field)
 			close(show)
 		})
 		<-show
