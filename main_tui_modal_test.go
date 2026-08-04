@@ -373,3 +373,58 @@ func TestTUIModalConfirmNo(t *testing.T) {
 		t.Fatal("应用未退出")
 	}
 }
+
+// TestTUIModalConfirmArrow：确认框方向键导航——按 → 移到"否"，Enter 返回 false
+// （回归测试：修复 Windows 下确认弹窗方向键无响应）
+func TestTUIModalConfirmArrow(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan bool, 1)
+	go func() {
+		result <- utils.Confirm("确认删除证书?")
+	}()
+
+	runDone := make(chan struct{})
+	go func() {
+		_ = app.Run()
+		close(runDone)
+	}()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("确认框未弹出")
+		}
+		// → 移到"否"，Enter 返回 false
+		sim.InjectKey(tcell.KeyRight, 0, tcell.ModNone)
+		time.Sleep(200 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+
+	select {
+	case v := <-result:
+		if v {
+			t.Error("按 → 后 Enter 应返回 false（焦点在否按钮）")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("确认框方向键导航超时")
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}

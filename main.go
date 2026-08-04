@@ -720,38 +720,17 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		return <-result
 	}
 
-	// 确认框
+	// 确认框（用 tview 内置 Modal：支持方向键在按钮间移动、鼠标点击、Enter 触发）
 	utils.TUIConfirm = func(prompt string) bool {
 		result := make(chan bool, 1)
 		currentShow = make(chan struct{})
-		text := tview.NewTextView().
-			SetDynamicColors(true).
-			SetText(prompt)
-		yes := func() {
-			result <- true
-			closeModal()
-		}
-		no := func() {
-			result <- false
-			closeModal()
-		}
-		// Flex 组合：提示文本 + 按钮（避免 Form.AddFormItem(TextView) 的 GetFieldHeight=0 布局问题）
-		buttons := tview.NewForm().
-			AddButton("是", yes).
-			AddButton("否", no)
-		modal := tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(text, 2, 0, false).
-			AddItem(buttons, 3, 0, true) // focus=true：Enter 由按钮响应
-		modal.SetBorder(true).SetTitle(" 确认 ")
-		// 注意：不拦截 Enter——回车由当前聚焦按钮自然响应（所见即所得），
-		// 避免"高亮否按钮却执行是"的陷阱；ESC 统一为取消（否）
-		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEsc {
-				no()
-				return nil
-			}
-			return event
-		})
+		modal := tview.NewModal().
+			SetText(prompt).
+			AddButtons([]string{"是", "否"}).
+			SetDoneFunc(func(index int, label string) {
+				result <- label == "是"
+				closeModal()
+			})
 		showModal(modal, 60, 8)
 		<-currentShow
 		return <-result
