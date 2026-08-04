@@ -1,18 +1,21 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/fatih/color"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/spf13/cobra"
 	"os"
+	"path/filepath"
 	"runtime"
 	"ssl_assistant/config"
 	"ssl_assistant/db"
 	"ssl_assistant/third/github"
 	"ssl_assistant/utils"
+	"strconv"
+	"sync"
+	"time"
 )
 
 var Version string
@@ -188,17 +191,15 @@ func main() {
 }
 
 // runInteractiveMenu 双击/无参数运行时进入的交互菜单（基于 tview 成熟 TUI 框架）。
-// 布局：上方证书列表（主区）、下方菜单平铺（辅区）、底部提示区。
-// 选择操作后通过 Suspend/Resume 以普通终端模式执行操作函数（输出/输入均原生可用），
-// 执行完回到 TUI 并刷新列表——框架自动处理方向键导航、窗口 resize、重绘。
+// 全 TUI 架构：主区证书列表（tview.Table）、菜单平铺（辅区）、反馈区（操作输出实时渲染）。
+// 操作通过输出重定向（os.Pipe → 反馈区 TextView）在 TUI 内执行，不 Suspend、不退出界面；
+// 业务函数内的 ReadInput/Confirm/MultiSelect 走 TUI 模态输入钩子。
 func runInteractiveMenu() {
-	// 菜单项按平台动态生成：
-	// Windows 下 cron 常驻/查任务不适用，隐藏"查看任务"
+	// 菜单项按平台动态生成（"查看证书"已移除——主区证书列表即实时查看）
 	items := []string{
 		"初始化程序",
 		"添加证书",
 		"删除证书",
-		"查看证书",
 		"更新证书",
 		"快速添加域名",
 		"证书更新任务",
@@ -227,17 +228,78 @@ func runInteractiveMenu() {
 		SetTextAlign(tview.AlignCenter).
 		SetText("[::b]SSL Assistant 操作菜单[::-]")
 
-	// 主区：证书列表（含 ANSI 颜色）
-	listView := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true)
-	listView.SetBorder(true).SetTitle(" 证书列表 ")
-	refreshList := func() {
-		listView.Clear()
-		fmt.Fprint(tview.ANSIWriter(listView), captureCertListText())
+	// 主区：证书列表（tview.Table，摒弃老式 tablewriter 文本表格）
+	certTable := tview.NewTable().
+		SetFixed(1, 0).
+		SetSelectable(false, false).
+		SetBorders(false)
+	certTable.SetBorder(true).SetTitle(" 证书列表 ")
+	refreshCertTable := func() {
+		certTable.Clear()
+		header := []string{"ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "证书文件", "私钥文件"}
+		for c, h := range header {
+			certTable.SetCell(0, c, tview.NewTableCell(h).SetTextColor(tcell.ColorAqua).SetSelectable(false))
+		}
+		certs, err := db.GetAllCertificatesWrapper()
+		if err != nil {
+			certTable.SetCell(1, 0, tview.NewTableCell("获取证书列表失败: "+err.Error()).SetTextColor(tcell.ColorRed))
+			return
+		}
+		if len(certs) == 0 {
+			certTable.SetCell(1, 0, tview.NewTableCell("暂无证书，可通过菜单「添加证书」或「快速添加域名」导入").SetTextColor(tcell.ColorYellow))
+			return
+		}
+		for i, cert := range certs {
+			row := i + 1
+			expireDay := time.Unix(cert.ExpireTime, 0).Sub(time.Now())
+			status := "有效"
+			if cert.ExpireTime < time.Now().Unix() {
+				status = "过期"
+			}
+			remain := strconv.FormatInt(int64(expireDay.Hours()/24), 10) + "天"
+			if expireDay < 0 {
+				remain = "已过期"
+			}
+			// 路径只显示文件名，避免超长路径撑爆表格
+			certFile, keyFile := cert.CertPath, cert.KeyPath
+			if cert.CertPath != "" {
+				certFile = filepath.Base(cert.CertPath)
+			}
+			if cert.KeyPath != "" {
+				keyFile = filepath.Base(cert.KeyPath)
+			}
+			rowData := []string{
+				strconv.Itoa(cert.ID),
+				cert.Domain,
+				status,
+				time.Unix(cert.CreateTime, 0).Format("2006-01-02"),
+				time.Unix(cert.ExpireTime, 0).Format("2006-01-02"),
+				remain,
+				cert.CertSource,
+				certFile,
+				keyFile,
+			}
+			for c, v := range rowData {
+				cell := tview.NewTableCell(v)
+				if c == 2 && status == "过期" {
+					cell.SetTextColor(tcell.ColorRed)
+				} else if c == 2 {
+					cell.SetTextColor(tcell.ColorGreen)
+				}
+				certTable.SetCell(row, c, cell)
+			}
+		}
 	}
+	refreshCertTable()
 
-	// 反馈/提示区
+	// 反馈区：操作输出实时渲染（ANSI 颜色 + 自动滚动）
+	feedback := tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(true).
+		SetWrap(true)
+	feedback.SetBorder(true).SetTitle(" 操作输出 ")
+
+	// 状态/提示区
 	status := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
 		SetText("←/→/↑/↓ 移动  回车执行   ESC 退出")
@@ -251,7 +313,7 @@ func runInteractiveMenu() {
 				return
 			}
 			if idx == viewTaskIdx {
-				runActionSuspended(app, "查看任务", func() {
+				runAction(app, feedback, "查看任务", func() {
 					if err := initGuide(true); err != nil {
 						return
 					}
@@ -261,66 +323,62 @@ func runInteractiveMenu() {
 					} else {
 						color.Green("当前任务PID: %s", cPid)
 					}
-				})
-				refreshList()
+				}, refreshCertTable)
 				return
 			}
 			switch idx {
 			case 0:
-				runActionSuspended(app, "初始化程序", initConfig)
+				runAction(app, feedback, "初始化程序", initConfig, refreshCertTable)
 			case 1:
-				runActionSuspended(app, "添加证书", func() { _ = addCertificate() })
+				runAction(app, feedback, "添加证书", func() { _ = addCertificate() }, refreshCertTable)
 			case 2:
-				runActionSuspended(app, "删除证书", func() { _ = deleteCertificate() })
+				runAction(app, feedback, "删除证书", func() { _ = deleteCertificate() }, refreshCertTable)
 			case 3:
-				runActionSuspended(app, "查看证书", func() { _ = showCertificates() })
+				runAction(app, feedback, "更新证书", func() { _ = updateCertificates() }, refreshCertTable)
 			case 4:
-				runActionSuspended(app, "更新证书", func() { _ = updateCertificates() })
-			case 5:
-				runActionSuspended(app, "快速添加域名", func() {
+				runAction(app, feedback, "快速添加域名", func() {
 					if err := initGuide(true); err != nil {
 						return
 					}
 					_ = findNginxPathCmd()
-				})
-			case 6:
+				}, refreshCertTable)
+			case 5:
 				// Windows 下 cron 常驻进程不适用，引导使用任务计划程序；
 				// Linux 下与 CLI `cron` 一致
 				if runtime.GOOS == "windows" {
-					runActionSuspended(app, "证书更新任务", func() {
+					runAction(app, feedback, "证书更新任务", func() {
 						color.Yellow("Windows 环境请使用任务计划程序定期执行 update（参见 README「计划任务设置」），无需本工具常驻进程\n")
-					})
+					}, refreshCertTable)
 				} else {
-					runActionSuspended(app, "证书更新任务", func() {
+					runAction(app, feedback, "证书更新任务", func() {
 						if err := initGuide(true); err != nil {
 							return
 						}
 						cronTask(false)
-					})
+					}, refreshCertTable)
 				}
+			case 6:
+				runAction(app, feedback, "修改密钥", modifyKey, refreshCertTable)
 			case 7:
-				runActionSuspended(app, "修改密钥", modifyKey)
+				runAction(app, feedback, "修改重载命令", func() { _ = modifyRestartCmd() }, refreshCertTable)
 			case 8:
-				runActionSuspended(app, "修改重载命令", func() { _ = modifyRestartCmd() })
+				runAction(app, feedback, "修改提前更新天数", func() { _ = modifyExpirationDay() }, refreshCertTable)
 			case 9:
-				runActionSuspended(app, "修改提前更新天数", func() { _ = modifyExpirationDay() })
+				runAction(app, feedback, "查看配置信息", func() { _ = getConfigInfo() }, refreshCertTable)
 			case 10:
-				runActionSuspended(app, "查看配置信息", func() { _ = getConfigInfo() })
-			case 11:
-				runActionSuspended(app, "显示版本信息", func() {
+				runAction(app, feedback, "显示版本信息", func() {
 					fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
-				})
-			case 12:
-				runActionSuspended(app, "检查更新", func() { _ = checkUpdate() })
+				}, refreshCertTable)
+			case 11:
+				runAction(app, feedback, "检查更新", func() { _ = checkUpdate() }, refreshCertTable)
 			default:
-				// "退出"（index 13，两平台固定）与 Linux 的"查看任务"（已在上方处理）
+				// "退出"（index 12，两平台固定）与 Linux 的"查看任务"（已在上方处理）
 				if items[idx] == "退出" {
 					app.Stop()
 					return
 				}
 				color.Yellow("已取消\n")
 			}
-			refreshList()
 		})
 	// 平铺菜单：按终端宽度计算列数（初始 80 列，tview 启动后再按实际宽度重排）
 	menuCols = computeMenuCols(items, 80)
@@ -329,10 +387,11 @@ func runInteractiveMenu() {
 		return (len(items) + menuCols - 1) / menuCols
 	}
 
-	// 布局：标题 + 列表（弹性）+ 菜单（固定高度=菜单行数）+ 状态
+	// 布局：标题 + 证书列表（弹性）+ 反馈（弹性）+ 菜单（固定高度）+ 状态
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(title, 1, 0, false).
-		AddItem(listView, 0, 1, false).
+		AddItem(certTable, 0, 2, false).
+		AddItem(feedback, 0, 1, false).
 		AddItem(menu, menuRows(), 0, true).
 		AddItem(status, 1, 0, false)
 
@@ -360,7 +419,9 @@ func runInteractiveMenu() {
 	}
 	rebuildMenu()
 
-	app.SetRoot(layout, true)
+	// 注册 TUI 输入钩子：业务函数的 ReadInput/Confirm/MultiSelect 走 tview 模态
+	pagesRoot := registerTUIInputHooks(app, layout)
+	app.SetRoot(pagesRoot, true)
 
 	// 终端 resize 时按实际宽度重排菜单列数。
 	// 用 SetBeforeDrawFunc：回调在 root.Draw 前执行，直接改数据当帧生效，
@@ -377,17 +438,25 @@ func runInteractiveMenu() {
 
 	// 菜单获得焦点后 Enter 已由 SetSelectedFunc 处理；ESC 退出
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// 模态输入框打开时（业务操作中），ESC 交给模态自己处理（取消输入），
+		// 不退出整个应用
 		if event.Key() == tcell.KeyEsc {
+			if pagesRoot.HasPage("modal") {
+				return event // 让模态的 SetInputCapture 处理
+			}
 			app.Stop()
 			return nil
 		}
 		return event
 	})
 
-	refreshList()
 	if err := app.Run(); err != nil {
 		fmt.Printf("交互界面启动失败: %v\n", err)
 	}
+	// 退出交互菜单后清理 TUI 输入钩子
+	utils.TUIReadInput = nil
+	utils.TUIConfirm = nil
+	utils.TUIMultiSelect = nil
 }
 
 // computeMenuCols 按终端宽度与最长菜单项计算平铺列数（至少 1 列）
@@ -431,44 +500,253 @@ func displayWidthForMenu(s string) int {
 	return w
 }
 
-// runActionSuspended 以普通终端模式执行菜单操作：
-// tview Suspend(f) 恢复终端原始状态并在 f 内执行操作函数（输出/输入
-// ReadInput/Confirm 等均原生可用），f 返回后自动 Resume 回到 TUI 重绘。
-// 这是 tview 官方支持的"外部交互"模式，从根本上避免自绘画布的区域错乱/闪烁/残留问题。
-func runActionSuspended(app *tview.Application, title string, fn func()) {
-	app.Suspend(func() {
-		fmt.Printf("\n========== %s ==========\n", title)
-		fn()
-		fmt.Println("\n按回车返回菜单...")
-		utils.ReadInput("", "")
-	})
-}
+// runActionMu 防止多个操作并发执行（并发替换 os.Stdout 会竞态、反馈区互踩）。
+// 锁在 goroutine 内持有整个操作周期；runAction 本身不阻塞（若上一个操作仍在执行，
+// 本次选择被忽略——用 TryLock 非阻塞探测）。
+var runActionMu sync.Mutex
 
-// captureCertListText 执行 getCertificates 并捕获其输出文本（含 ANSI 颜色），
-// 供 TUI 主区域证书列表渲染。
-// 由于 os.Stdout 是 *os.File，使用 os.Pipe 捕获；defer 保证异常时也能恢复与关闭。
-func captureCertListText() string {
+// runAction 在 TUI 内执行菜单操作：清空反馈区 → 将 os.Stdout/color.Output
+// 重定向到反馈区 TextView（os.Pipe + goroutine + QueueUpdateDraw 实时渲染）→
+// 在独立 goroutine 执行 fn → 完成后恢复输出并回调 onDone（刷新列表）。
+// 操作全程不退出 TUI，输出实时显示在反馈区；业务函数内的
+// ReadInput/Confirm/MultiSelect 走 TUI 模态输入钩子（事件循环不被阻塞）。
+func runAction(app *tview.Application, feedback *tview.TextView, title string, fn func(), onDone func()) {
+	// 上一个操作还在执行时忽略本次选择（避免并发替换 os.Stdout）
+	if !runActionMu.TryLock() {
+		return
+	}
+	// 清空反馈区并写标题
+	feedback.Clear()
+	feedback.SetText("")
+	fmt.Fprintf(tview.ANSIWriter(feedback), "[::b]══════ %s ══════[::-]\n", title)
+
+	// 输出重定向：os.Stdout/color.Output → pipe → goroutine 读 → 反馈区（UI 线程更新）
 	r, w, err := os.Pipe()
 	if err != nil {
-		return ""
+		// 重定向失败（极端情况）则直接在反馈区写提示
+		fmt.Fprintf(tview.ANSIWriter(feedback), "[red]输出重定向失败: %v[-]\n", err)
+		go func() {
+			defer runActionMu.Unlock()
+			fn()
+			if onDone != nil {
+				app.QueueUpdateDraw(onDone)
+			}
+		}()
+		return
 	}
 	oldOut, oldColor := os.Stdout, color.Output
 	os.Stdout = w
 	color.Output = w
-	var buf bytes.Buffer
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = buf.ReadFrom(r)
+		buf := make([]byte, 4096)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				chunk := string(buf[:n])
+				app.QueueUpdateDraw(func() {
+					fmt.Fprint(tview.ANSIWriter(feedback), chunk)
+					feedback.ScrollToEnd()
+				})
+			}
+			if err != nil {
+				return
+			}
+		}
 	}()
-	defer func() {
-		w.Close()
-		os.Stdout, color.Output = oldOut, oldColor
-		<-done
-		r.Close()
+
+	// 执行操作（独立 goroutine，避免阻塞 tview 事件循环——
+	// 操作内的 ReadInput/Confirm 模态钩子需事件循环响应按钮事件）
+	go func() {
+		// fn panic 时也要恢复输出、释放锁（避免锁泄漏 + 全局 stdout 残留 pipe）
+		defer func() {
+			os.Stdout = oldOut
+			color.Output = oldColor
+			w.Close()
+			<-done
+			r.Close()
+			runActionMu.Unlock()
+			app.QueueUpdateDraw(func() {
+				feedback.ScrollToEnd()
+				if onDone != nil {
+					onDone()
+				}
+			})
+		}()
+		fn()
 	}()
-	getCertificates()
-	return buf.String()
+}
+
+// registerTUIInputHooks 注册 TUI 模态输入钩子并把模态层设为应用根：
+// 业务函数（cert.go）内的 utils.ReadInput/Confirm/MultiSelectCheckbox 调用时，
+// 弹出 tview 模态输入框/确认框/多选列表，在 TUI 内完成输入，不退出界面。
+// 返回页面容器（含 "main" 页 = root），供 app.SetRoot 使用。
+func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.Pages {
+	// 模态层：覆盖在根布局之上
+	pages := tview.NewPages()
+	pages.AddPage("main", root, true, true)
+
+	// 模态输入框：阻塞等待用户输入，返回结果
+	// 注意：钩子在业务 goroutine 调用，pages 操作必须经 QueueUpdateDraw 在 UI 线程执行
+	utils.TUIReadInput = func(prompt, def string) string {
+		result := make(chan string, 1)
+		show := make(chan struct{})
+		field := tview.NewInputField().
+			SetLabel(prompt + " ").
+			SetText(def)
+		submit := func() {
+			result <- field.GetText()
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		cancel := func() {
+			result <- def
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		modal := tview.NewForm().
+			AddFormItem(field).
+			AddButton("确定", submit).
+			AddButton("取消", cancel)
+		modal.SetBorder(true).SetTitle(" 输入 ")
+		modal.SetRect(0, 0, 60, 7)
+		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEnter {
+				submit()
+				return nil
+			}
+			if event.Key() == tcell.KeyEsc {
+				cancel()
+				return nil
+			}
+			return event
+		})
+		// UI 线程执行 AddPage + SetFocus
+		app.QueueUpdateDraw(func() {
+			pages.AddPage("modal", modal, true, true)
+			app.SetFocus(modal)
+			close(show)
+		})
+		<-show
+		return <-result
+	}
+
+	// 确认框
+	utils.TUIConfirm = func(prompt string) bool {
+		result := make(chan bool, 1)
+		show := make(chan struct{})
+		text := tview.NewTextView().
+			SetDynamicColors(true).
+			SetText(prompt)
+		yes := func() {
+			result <- true
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		no := func() {
+			result <- false
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		modal := tview.NewForm().
+			AddFormItem(text).
+			AddButton("是 (Y)", yes).
+			AddButton("否 (N)", no)
+		modal.SetBorder(true).SetTitle(" 确认 ")
+		modal.SetRect(0, 0, 60, 5)
+		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEnter {
+				yes()
+				return nil
+			}
+			if event.Key() == tcell.KeyEsc {
+				no()
+				return nil
+			}
+			return event
+		})
+		app.QueueUpdateDraw(func() {
+			pages.AddPage("modal", modal, true, true)
+			app.SetFocus(modal)
+			close(show)
+		})
+		<-show
+		return <-result
+	}
+
+	// 多选列表（快速添加域名站点勾选）：Flex 组合 List + 按钮
+	utils.TUIMultiSelect = func(items []string, prompt string) []int {
+		result := make(chan []int, 1)
+		show := make(chan struct{})
+		selected := make([]bool, len(items))
+		list := tview.NewList()
+		for i, item := range items {
+			idx := i // 闭包捕获
+			list.AddItem("[ ] "+item, "", 0, func() {
+				selected[idx] = !selected[idx]
+				mark := " "
+				if selected[idx] {
+					mark = "x"
+				}
+				list.SetItemText(idx, "["+mark+"] "+items[idx], "")
+			})
+		}
+		confirm := func() {
+			var out []int
+			for i, s := range selected {
+				if s {
+					out = append(out, i)
+				}
+			}
+			result <- out
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		cancel := func() {
+			result <- nil
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		// 列表高度自适应（最多 12 行，最少 5 行）
+		listH := len(items) + 2
+		if listH < 5 {
+			listH = 5
+		}
+		if listH > 12 {
+			listH = 12
+		}
+		buttons := tview.NewForm().
+			AddButton("确认", confirm).
+			AddButton("取消", cancel)
+		modal := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(list, listH, 0, true).
+			AddItem(buttons, 3, 0, false)
+		modal.SetBorder(true).SetTitle(" " + prompt + " ")
+		modal.SetRect(0, 0, 80, listH+5)
+		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEsc {
+				cancel()
+				return nil
+			}
+			return event
+		})
+		app.QueueUpdateDraw(func() {
+			pages.AddPage("modal", modal, true, true)
+			app.SetFocus(list)
+			close(show)
+		})
+		<-show
+		return <-result
+	}
+
+	return pages
 }
 
 // checkUpdate 检查 GitHub 最新版本并输出下载地址（不自动下载更新）。

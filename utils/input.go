@@ -16,6 +16,16 @@ import (
 // 必须共享而非每次新建：bufio.Reader 会预读缓冲，新建会丢弃已被前一次读入缓冲的数据（管道多行输入场景）。
 var stdinReader *bufio.Reader
 
+// TUI 输入钩子：tview 交互模式下由 runInteractiveMenu 注册，替代终端 stdin 读取。
+// 业务函数（cert.go 等）调用 ReadInput/Confirm/MultiSelectCheckbox 时，
+// 若钩子已注册则走 TUI 模态输入框（实时渲染、不退出界面）；否则回退标准 stdin。
+// 非交互 CLI 模式永不注册，行为不变。
+var (
+	TUIReadInput  func(prompt, def string) string
+	TUIConfirm    func(prompt string) bool
+	TUIMultiSelect func(items []string, prompt string) []int
+)
+
 func inputReader() *bufio.Reader {
 	if stdinReader == nil {
 		stdinReader = bufio.NewReader(os.Stdin)
@@ -35,7 +45,11 @@ func IsInteractive() bool {
 
 // ReadInput 打印提示并读取一行输入（去除首尾空白）。
 // 输入为空时返回 def；读到 EOF（如管道关闭/非交互误跑）时以非零退出码结束，避免空输入继续走业务逻辑。
+// TUI 交互模式下（TUIReadInput 已注册）改用 tview 模态输入框，不读终端 stdin。
 func ReadInput(prompt, def string) string {
+	if TUIReadInput != nil {
+		return TUIReadInput(prompt, def)
+	}
 	fmt.Print(prompt)
 	input, err := inputReader().ReadString('\n')
 	if err != nil {
@@ -267,10 +281,14 @@ func selectMenuKeyNav(items []string, prompt string) int {
 // MultiSelectCheckbox 多选勾选列表。
 // 终端环境下为方向键交互：↑/↓ 移动高亮，空格切换勾选，回车确认（ESC 取消）；
 // 非终端（管道/重定向）回退为序号输入：输入序号（空格分隔可一次切换多个）后回车，直接回车确认。
+// TUI 交互模式下（TUIMultiSelect 已注册）改用 tview 模态多选列表。
 // 返回已勾选项的下标（与 items 顺序一致）；items 为空时返回空切片。
 func MultiSelectCheckbox(items []string, prompt string) []int {
 	if len(items) == 0 {
 		return nil
+	}
+	if TUIMultiSelect != nil {
+		return TUIMultiSelect(items, prompt)
 	}
 	if IsInteractive() {
 		return multiSelectKeyNav(items, prompt)
@@ -417,7 +435,11 @@ func collectSelected(selected []bool) []int {
 }
 
 // Confirm 打印 y/n 确认提示，返回是否确认（y/yes 视为确认，其他视为否）。
+// TUI 交互模式下（TUIConfirm 已注册）改用 tview 模态确认框。
 func Confirm(prompt string) bool {
+	if TUIConfirm != nil {
+		return TUIConfirm(prompt)
+	}
 	input := ReadInput(prompt+"(y/n): ", "")
 	switch strings.ToLower(input) {
 	case "y", "yes":

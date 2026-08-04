@@ -199,11 +199,18 @@ func TestTUIMenuRendered(t *testing.T) {
 			}
 		}
 
-		// 菜单项与标题应出现
-		for _, want := range []string{"SSL Assistant 操作菜单", "初始化程序", "退出", "←/→/↑/↓"} {
+		// 标题与全部 13 个菜单项应渲染
+		wants := []string{"SSL Assistant 操作菜单", "初始化程序", "添加证书", "删除证书",
+			"更新证书", "快速添加域名", "证书更新任务", "修改密钥", "修改重载命令",
+			"修改提前更新天数", "查看配置信息", "显示版本信息", "检查更新", "退出", "←/→/↑/↓"}
+		for _, want := range wants {
 			if !contains(text, want) {
 				t.Errorf("屏幕内容缺少 %q，实际:\n%s", want, text)
 			}
+		}
+		// 确认"查看证书"菜单项已移除（主界面即证书列表）
+		if contains(text, "查看证书") {
+			t.Errorf("不应存在「查看证书」菜单项（已移除）:\n%s", text)
 		}
 
 		sim.InjectKey(tcell.KeyESC, ' ', tcell.ModNone)
@@ -227,9 +234,9 @@ func contains(s, sub string) bool {
 // buildTestMenuItems 返回与 runInteractiveMenu 一致的菜单项（不含平台差异分支）
 func buildTestMenuItems() []string {
 	return []string{
-		"初始化程序", "添加证书", "删除证书", "查看证书", "更新证书",
-		"快速添加域名", "证书更新任务", "修改密钥", "修改重载命令",
-		"修改提前更新天数", "查看配置信息", "显示版本信息", "检查更新", "退出",
+		"初始化程序", "添加证书", "删除证书", "更新证书", "快速添加域名",
+		"证书更新任务", "修改密钥", "修改重载命令", "修改提前更新天数",
+		"查看配置信息", "显示版本信息", "检查更新", "退出",
 	}
 }
 
