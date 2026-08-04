@@ -238,18 +238,19 @@ func runInteractiveMenu() {
 	certTable.SetBorder(true).SetTitle(" 证书列表 ")
 	refreshCertTable := func() {
 		certTable.Clear()
-		header := []string{"ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "证书文件", "私钥文件"}
-		for c, h := range header {
-			certTable.SetCell(0, c, tview.NewTableCell(h).SetTextColor(tcell.ColorAqua).SetSelectable(false))
-		}
 		certs, err := db.GetAllCertificatesWrapper()
 		if err != nil {
-			certTable.SetCell(1, 0, tview.NewTableCell("获取证书列表失败: "+err.Error()).SetTextColor(tcell.ColorRed))
+			certTable.SetCell(0, 0, tview.NewTableCell("获取证书列表失败: "+err.Error()).SetTextColor(tcell.ColorRed))
 			return
 		}
 		if len(certs) == 0 {
-			certTable.SetCell(1, 0, tview.NewTableCell("暂无证书，可通过菜单「添加证书」或「快速添加域名」导入").SetTextColor(tcell.ColorYellow))
+			// 无证书时不显示空表头，只显示引导提示
+			certTable.SetCell(0, 0, tview.NewTableCell("暂无证书，可通过菜单「添加证书」或「快速添加域名」导入").SetTextColor(tcell.ColorYellow))
 			return
+		}
+		header := []string{"ID", "域名", "状态", "创建时间", "过期时间", "剩余天数", "来源", "证书文件", "私钥文件"}
+		for c, h := range header {
+			certTable.SetCell(0, c, tview.NewTableCell(h).SetTextColor(tcell.ColorAqua).SetSelectable(false))
 		}
 		for i, cert := range certs {
 			row := i + 1
