@@ -17,13 +17,14 @@ import (
 var stdinReader *bufio.Reader
 
 // TUI 输入钩子：tview 交互模式下由 runInteractiveMenu 注册，替代终端 stdin 读取。
-// 业务函数（cert.go 等）调用 ReadInput/Confirm/MultiSelectCheckbox 时，
+// 业务函数（cert.go 等）调用 ReadInput/Confirm/ReadPassword/MultiSelectCheckbox 时，
 // 若钩子已注册则走 TUI 模态输入框（实时渲染、不退出界面）；否则回退标准 stdin。
 // 非交互 CLI 模式永不注册，行为不变。
 var (
-	TUIReadInput  func(prompt, def string) string
-	TUIConfirm    func(prompt string) bool
-	TUIMultiSelect func(items []string, prompt string) []int
+	TUIReadInput    func(prompt, def string) string
+	TUIConfirm      func(prompt string) bool
+	TUIReadPassword func(prompt string) string
+	TUIMultiSelect  func(items []string, prompt string) []int
 )
 
 func inputReader() *bufio.Reader {
@@ -63,7 +64,6 @@ func ReadInput(prompt, def string) string {
 	}
 	return input
 }
-
 
 // selectMenuNumeric 序号输入模式（非终端回退）：输入序号回车选择，直接回车默认第一项。
 func selectMenuNumeric(items []string, prompt string) int {
@@ -277,7 +277,6 @@ func selectMenuKeyNav(items []string, prompt string) int {
 	}
 }
 
-
 // MultiSelectCheckbox 多选勾选列表。
 // 终端环境下为方向键交互：↑/↓ 移动高亮，空格切换勾选，回车确认（ESC 取消）；
 // 非终端（管道/重定向）回退为序号输入：输入序号（空格分隔可一次切换多个）后回车，直接回车确认。
@@ -451,7 +450,11 @@ func Confirm(prompt string) bool {
 
 // ReadPassword 读取敏感输入（不回显）。
 // 非交互终端（如管道）下回退为明文读取，保证可用性；EOF 时退出，避免静默保存空密钥。
+// TUI 交互模式下（TUIReadPassword 已注册）改用 tview 模态输入框（掩码显示），不读终端 stdin。
 func ReadPassword(prompt string) string {
+	if TUIReadPassword != nil {
+		return TUIReadPassword(prompt)
+	}
 	fmt.Print(prompt)
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		raw, err := term.ReadPassword(int(os.Stdin.Fd()))

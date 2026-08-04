@@ -456,6 +456,7 @@ func runInteractiveMenu() {
 	// 退出交互菜单后清理 TUI 输入钩子
 	utils.TUIReadInput = nil
 	utils.TUIConfirm = nil
+	utils.TUIReadPassword = nil
 	utils.TUIMultiSelect = nil
 }
 
@@ -513,6 +514,10 @@ var runActionMu sync.Mutex
 func runAction(app *tview.Application, feedback *tview.TextView, title string, fn func(), onDone func()) {
 	// 上一个操作还在执行时忽略本次选择（避免并发替换 os.Stdout）
 	if !runActionMu.TryLock() {
+		app.QueueUpdateDraw(func() {
+			fmt.Fprintf(tview.ANSIWriter(feedback), "[yellow]上一操作执行中，请等待完成[-]\n")
+			feedback.ScrollToEnd()
+		})
 		return
 	}
 	// 清空反馈区并写标题
@@ -625,6 +630,51 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 			return event
 		})
 		// UI 线程执行 AddPage + SetFocus
+		app.QueueUpdateDraw(func() {
+			pages.AddPage("modal", modal, true, true)
+			app.SetFocus(modal)
+			close(show)
+		})
+		<-show
+		return <-result
+	}
+
+	// 密码输入框（不回显，掩码 * 显示）——初始化/修改密钥的平台密钥
+	utils.TUIReadPassword = func(prompt string) string {
+		result := make(chan string, 1)
+		show := make(chan struct{})
+		field := tview.NewInputField().
+			SetLabel(prompt + " ").
+			SetMaskCharacter('*')
+		submit := func() {
+			result <- field.GetText()
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		cancel := func() {
+			result <- ""
+			pages.RemovePage("modal")
+			pages.SwitchToPage("main")
+			app.SetFocus(root)
+		}
+		modal := tview.NewForm().
+			AddFormItem(field).
+			AddButton("确定", submit).
+			AddButton("取消", cancel)
+		modal.SetBorder(true).SetTitle(" 密码 ")
+		modal.SetRect(0, 0, 60, 7)
+		modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEnter {
+				submit()
+				return nil
+			}
+			if event.Key() == tcell.KeyEsc {
+				cancel()
+				return nil
+			}
+			return event
+		})
 		app.QueueUpdateDraw(func() {
 			pages.AddPage("modal", modal, true, true)
 			app.SetFocus(modal)
