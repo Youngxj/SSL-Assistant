@@ -73,7 +73,7 @@ func TestTUIEndToEndConfigView(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		text := feedback.GetText(true)
-		if contains(text, "restart_cmd") || contains(text, "api_url") {
+		if contains(text, "重载命令") || contains(text, "certd ApiUrl") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -276,5 +276,38 @@ func TestModifyDefaultReadsConfig(t *testing.T) {
 	_ = modifyRestartCmd()
 	if gotDef != "my-reload cmd" {
 		t.Errorf("重载命令默认值应为当前配置，实际 %q", gotDef)
+	}
+}
+
+// TestGetConfigInfoChinese：查看配置信息输出中文配置名，敏感值打码，隐藏 cron_pid
+func TestGetConfigInfoChinese(t *testing.T) {
+	tmp := t.TempDir()
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	_ = config.InitConfig()
+	_ = config.SetConfig("", "is_init", "1")
+	_ = config.SetConfig("", "restart_cmd", "nginx -s reload")
+	_ = config.SetConfig("", "before_expiration_day", "30")
+	_ = config.SetConfig("third.certd", "api_url", "https://x.com")
+	_ = config.SetConfig("third.certd", "key_secret", "secret123")
+	_ = config.SetConfig("", "cron_pid", "12345")
+
+	out := captureAllOut(t, func() { _ = getConfigInfo() })
+	for _, want := range []string{"重载命令", "提前更新天数", "certd ApiUrl", "certd KeySecret", "已初始化"} {
+		if !contains(out, want) {
+			t.Errorf("输出缺少中文配置名 %q，实际: %q", want, out)
+		}
+	}
+	if contains(out, "restart_cmd:") {
+		t.Errorf("不应输出英文 key restart_cmd")
+	}
+	if contains(out, "cron_pid") {
+		t.Errorf("不应输出 cron_pid 运行时值")
+	}
+	if contains(out, "secret123") {
+		t.Errorf("key_secret 应打码")
 	}
 }

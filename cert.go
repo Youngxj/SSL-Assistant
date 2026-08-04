@@ -1468,12 +1468,34 @@ func cronTask(force bool) {
 }
 
 // 获取配置信息
+// configKeyNames 配置项 key → 中文显示名
+var configKeyNames = map[string]string{
+	"is_init":                            "已初始化",
+	"restart_cmd":                        "重载命令",
+	"before_expiration_day":              "提前更新天数",
+	"debug":                              "调试模式",
+	"third.certd.api_url":                "certd ApiUrl",
+	"third.certd.key_id":                 "certd KeyId",
+	"third.certd.key_secret":             "certd KeySecret",
+	"third.certd.auto_apply":             "certd 自动申请",
+	"third.certd.auto_apply_template_id": "certd 申请模板ID",
+	"third.certd.auto_apply_renew_days":  "certd 自动申请提前天数",
+	"third.west.username":                "西部数码 username",
+	"third.west.api_key":                 "西部数码 apiKey",
+}
+
+// getConfigInfo 查看配置信息：key 名转为中文显示名，敏感值打码
 func getConfigInfo() error {
 	configs, err := config.GetConfigs()
 	if err != nil {
 		return fmt.Errorf("获取配置失败: %s", err)
 	}
 	for _, entry := range configs {
+		// 运行时临时值（cron 任务 PID）不展示
+		if entry.Key == "cron_pid" {
+			continue
+		}
+		// 敏感值打码
 		if strings.Contains(entry.Key, "key_secret") || strings.Contains(entry.Key, "api_key") {
 			if entry.Value == "" {
 				// 未配置时如实显示，避免空值被误认为已配置（打码）
@@ -1482,9 +1504,13 @@ func getConfigInfo() error {
 				entry.Value = "********"
 			}
 		}
-		color.Cyan("%s: %s\n", entry.Key, entry.Value)
+		name := entry.Key
+		if cn, ok := configKeyNames[entry.Key]; ok {
+			name = cn
+		}
+		color.Cyan("%s: %s\n", name, entry.Value)
 	}
-	return err
+	return nil
 }
 
 // 修改密钥
