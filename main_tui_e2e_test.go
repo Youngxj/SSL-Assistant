@@ -246,3 +246,35 @@ func TestTUIEndpointBatchDelete(t *testing.T) {
 		t.Fatal("应用未退出")
 	}
 }
+
+// TestModifyDefaultReadsConfig：修改天数/重载命令的输入默认值应取当前配置，
+// 而非固定默认值（避免每次重输）
+func TestModifyDefaultReadsConfig(t *testing.T) {
+	tmp := t.TempDir()
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	_ = config.InitConfig()
+	_ = config.SetConfig("", "is_init", "1")
+	_ = config.SetConfig("", "before_expiration_day", "30")
+	_ = config.SetConfig("", "restart_cmd", "my-reload cmd")
+
+	gotDef := ""
+	utils.TUIReadInput = func(prompt, def string) string {
+		gotDef = def
+		return def
+	}
+	defer func() { utils.TUIReadInput = nil }()
+
+	_ = modifyExpirationDay()
+	if gotDef != "30" {
+		t.Errorf("修改天数默认值应为当前配置 30，实际 %q", gotDef)
+	}
+	gotDef = ""
+	_ = modifyRestartCmd()
+	if gotDef != "my-reload cmd" {
+		t.Errorf("重载命令默认值应为当前配置，实际 %q", gotDef)
+	}
+}

@@ -1141,7 +1141,12 @@ func showCertificates() error {
 func modifyRestartCmd() error {
 	restartCmd, _ := config.GetConfig("", "restart_cmd")
 	fmt.Printf("当前重载命令: %s\n", color.CyanString(restartCmd))
-	newCmd := utils.ReadInput(fmt.Sprintf("请输入新的重载命令(如: %s): ", defaultReloadCmd), defaultReloadCmd)
+	// 默认值取当前配置（未配置时回退默认重载命令），避免每次重输
+	def := defaultReloadCmd
+	if strings.TrimSpace(restartCmd) != "" {
+		def = restartCmd
+	}
+	newCmd := utils.ReadInput(fmt.Sprintf("请输入新的重载命令(如: %s): ", def), def)
 	err := config.SetConfig("", "restart_cmd", newCmd)
 	if err != nil {
 		return fmt.Errorf("保存重载命令失败: %s", err)
@@ -1154,7 +1159,12 @@ func modifyRestartCmd() error {
 func modifyExpirationDay() error {
 	ExpirationDay, _ := config.GetConfig("", "before_expiration_day")
 	fmt.Printf("当前过期前天数: %s\n", color.CyanString(ExpirationDay))
-	newDay, err := strconv.Atoi(utils.ReadInput(fmt.Sprintf("请输入新的过期前天数(如: %d): ", defaultBeforeExpirationDay), strconv.Itoa(int(defaultBeforeExpirationDay))))
+	// 默认值取当前配置（未配置时回退默认天数），避免每次重输
+	def := strconv.Itoa(int(defaultBeforeExpirationDay))
+	if strings.TrimSpace(ExpirationDay) != "" {
+		def = ExpirationDay
+	}
+	newDay, err := strconv.Atoi(utils.ReadInput(fmt.Sprintf("请输入新的过期前天数(如: %s): ", def), def))
 	if err != nil || newDay <= 0 {
 		// 非法输入或 0 天时回退默认值，与旧逻辑保持一致
 		newDay = int(defaultBeforeExpirationDay)
