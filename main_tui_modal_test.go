@@ -506,3 +506,74 @@ func TestWheelPosition(t *testing.T) {
 		}
 	}
 }
+
+// TestTUIMultiSelectSpaceEnter：多选交互——空格勾选当前项，回车确认返回勾选下标
+func TestTUIMultiSelectSpaceEnter(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	result := make(chan []int, 1)
+	go func() {
+		result <- utils.MultiSelectCheckbox([]string{"域名A", "域名B", "域名C"}, "选择域名")
+	}()
+
+	runDone := make(chan struct{})
+	go func() {
+		_ = app.Run()
+		close(runDone)
+	}()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("多选模态未弹出")
+		}
+		// 空格勾选第 1 项
+		sim.InjectKey(tcell.KeyRune, ' ', tcell.ModNone)
+		time.Sleep(150 * time.Millisecond)
+		// 回车确认
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	}()
+
+	select {
+	case v := <-result:
+		if len(v) != 1 || v[0] != 0 {
+			t.Errorf("期望勾选 [0]，实际 %v", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("多选超时")
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
+}
+
+// TestWrappedLineCount：长文本换行后的显示行数估算（滚动范围正确性）
+func TestWrappedLineCount(t *testing.T) {
+	tv := tview.NewTextView().SetScrollable(true).SetWrap(true)
+	tv.SetRect(0, 0, 40, 10)
+	// 200 字符 / 40 列宽 → 换行 5 行
+	tv.SetText(strings.Repeat("A", 200))
+	if total := wrappedLineCount(tv); total != 5 {
+		t.Errorf("200字符/40列 应换行 5 行，实际 %d", total)
+	}
+	// 混合：1 行 abc + 1 行 def + 80 字符（2 行）= 4 行
+	tv.SetText("abc\ndef\n" + strings.Repeat("B", 80))
+	if total := wrappedLineCount(tv); total != 4 {
+		t.Errorf("混合行数应为 4，实际 %d", total)
+	}
+}

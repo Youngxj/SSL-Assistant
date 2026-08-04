@@ -38,24 +38,24 @@ func TestDisplayWidthForMenu(t *testing.T) {
 	}
 }
 
-// TestMenuExitIndex：两平台下"退出"恒为 index 12（Linux 末尾追加"查看任务"不影响）
+// TestMenuExitIndex：两平台下"退出"恒为 index 11（Linux 末尾追加"查看任务"不影响）
 func TestMenuExitIndex(t *testing.T) {
 	items := []string{
 		"初始化程序", "添加证书", "删除证书", "更新证书", "快速添加域名",
 		"证书更新任务", "修改密钥", "修改重载命令", "修改提前更新天数",
-		"查看配置信息", "显示版本信息", "检查更新", "退出",
+		"查看配置信息", "版本与更新", "退出",
 	}
-	// Windows：13 项，"退出"是最后一项
-	if items[12] != "退出" {
-		t.Fatalf("Windows 退出索引应为 12，实际 items[12]=%q", items[12])
+	// Windows：12 项，"退出"是最后一项
+	if items[11] != "退出" {
+		t.Fatalf("Windows 退出索引应为 11，实际 items[11]=%q", items[11])
 	}
-	// Linux：末尾追加"查看任务"，"退出"仍在 index 12
+	// Linux：末尾追加"查看任务"，"退出"仍在 index 11
 	linux := append(append([]string{}, items...), "查看任务")
-	if linux[12] != "退出" {
-		t.Fatalf("Linux 退出索引应为 12，实际 linux[12]=%q", linux[12])
+	if linux[11] != "退出" {
+		t.Fatalf("Linux 退出索引应为 11，实际 linux[11]=%q", linux[11])
 	}
-	if linux[13] != "查看任务" {
-		t.Fatalf("Linux 查看任务索引应为 13，实际 linux[13]=%q", linux[13])
+	if linux[12] != "查看任务" {
+		t.Fatalf("Linux 查看任务索引应为 12，实际 linux[12]=%q", linux[12])
 	}
 	// 菜单项索引唯一（无重复）
 	seen := map[string]int{}

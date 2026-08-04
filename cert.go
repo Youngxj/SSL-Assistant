@@ -1426,12 +1426,28 @@ func getConfigInfo() error {
 // 修改密钥
 func modifyKey() {
 	for {
-		// 直接回车可跳过配置（不配置平台时，添加域名会回退读取本地证书文件）
-		thirdC := utils.ReadInput("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔（直接回车跳过配置）: ", "")
-		if thirdC == "" {
-			return
+		// 平台选择：
+		// - TUI 交互模式：用多选勾选（空格勾选 certd/west、回车确认、可直接回车跳过），交互直观
+		// - CLI 模式：文本输入平台名（空格分隔）
+		var thirdCs []string
+		if utils.TUIMultiSelect != nil {
+			// 勾选要配置的平台（不勾选直接回车/确认空列表则跳过）
+			platforms := []string{"certd", "west"}
+			sel := utils.MultiSelectCheckbox(platforms, "请选择要配置的平台（可多选，不选则跳过）")
+			for _, i := range sel {
+				thirdCs = append(thirdCs, platforms[i])
+			}
+			if len(thirdCs) == 0 {
+				return // 跳过配置
+			}
+		} else {
+			// CLI：直接回车跳过配置（不配置平台时，添加域名会回退读取本地证书文件）
+			thirdC := utils.ReadInput("请选择要配置的平台，目前支持certd、west，可以单一使用，也可混用，多个平台用空格分隔（直接回车跳过配置）: ", "")
+			if thirdC == "" {
+				return
+			}
+			thirdCs = strings.Split(thirdC, " ")
 		}
-		thirdCs := strings.Split(thirdC, " ")
 		valid := false
 		for _, t := range thirdCs {
 			if t != "certd" && t != "west" {

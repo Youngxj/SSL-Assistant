@@ -210,8 +210,7 @@ func runInteractiveMenu() {
 		"修改重载命令",
 		"修改提前更新天数",
 		"查看配置信息",
-		"显示版本信息",
-		"检查更新",
+		"版本与更新",
 		"退出",
 	}
 	viewTaskIdx := -1
@@ -372,13 +371,14 @@ func runInteractiveMenu() {
 		case 9:
 			runAction(app, feedback, "查看配置信息", func() { _ = getConfigInfo() }, nil) // 只读
 		case 10:
-			runAction(app, feedback, "显示版本信息", func() {
+			// "版本与更新"：显示版本信息 + 检查更新
+			runAction(app, feedback, "版本与更新", func() {
 				fmt.Printf("SSL Assistant %s\n项目地址: https://github.com/Youngxj/SSL-Assistant\n", displayVersion())
+				fmt.Println()
+				_ = checkUpdate()
 			}, nil) // 只读
-		case 11:
-			runAction(app, feedback, "检查更新", func() { _ = checkUpdate() }, nil) // 只读
 		default:
-			// "退出"（index 12，两平台固定）与 Linux 的"查看任务"（已在上方处理）
+			// "退出"（index 11，两平台固定）与 Linux 的"查看任务"（已在上方处理）
 			if items[idx] == "退出" {
 				app.Stop()
 				return
@@ -516,9 +516,13 @@ func runInteractiveMenu() {
 // 支持 PgUp/PgDn（页滚动）、Home/End、鼠标滚轮（行滚动）。
 // lines 为正向下滚、为负向上滚；越界自动收敛到边界。
 func scrollTextView(tv *tview.TextView, lines int) {
-	// 内容总行数（GetText(true) 剥掉标签后按换行统计）
-	total := strings.Count(tv.GetText(true), "\n") + 1
-	_, _, _, vh := tv.GetInnerRect()
+	// 内容总显示行数：按可视宽度估算换行（tview 的 GetWrappedLineCount 依赖
+	// 未初始化的 width 字段，在 SetRect 布局下返回未换行数，故手动估算）
+	total := wrappedLineCount(tv)
+	_, _, vw, vh := tv.GetInnerRect()
+	if vw < 1 {
+		vw = 1
+	}
 	if vh < 1 {
 		vh = 1
 	}
@@ -541,6 +545,28 @@ func scrollTextView(tv *tview.TextView, lines int) {
 		}
 	}
 	tv.ScrollTo(newRow, 0)
+}
+
+// wrappedLineCount 估算 TextView 内容换行后的总显示行数：
+// 按可视宽度把每个逻辑行拆分为多行（CJK 全角按 2 列计）。
+func wrappedLineCount(tv *tview.TextView) int {
+	_, _, vw, _ := tv.GetInnerRect()
+	if vw < 1 {
+		vw = 1
+	}
+	total := 0
+	for _, line := range strings.Split(tv.GetText(true), "\n") {
+		w := displayWidthForMenu(line)
+		lines := w / vw
+		if w%vw != 0 {
+			lines++
+		}
+		if lines < 1 {
+			lines = 1
+		}
+		total += lines
+	}
+	return total
 }
 
 // computeMenuCols 按终端宽度与最长菜单项计算平铺列数（至少 1 列）
@@ -819,16 +845,17 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		currentShow = make(chan struct{})
 		selected := make([]bool, len(items))
 		list := tview.NewList()
-		for i, item := range items {
-			idx := i // 闭包捕获
-			list.AddItem("[ ] "+item, "", 0, func() {
-				selected[idx] = !selected[idx]
-				mark := " "
-				if selected[idx] {
-					mark = "x"
-				}
-				list.SetItemText(idx, "["+mark+"] "+items[idx], "")
-			})
+		for _, item := range items {
+			list.AddItem("[ ] "+item, "", 0, nil)
+		}
+		// 切换勾选状态并刷新列表项文本
+		toggle := func(idx int) {
+			selected[idx] = !selected[idx]
+			mark := " "
+			if selected[idx] {
+				mark = "x"
+			}
+			list.SetItemText(idx, "["+mark+"] "+items[idx], "")
 		}
 		confirm := func() {
 			var out []int
@@ -852,11 +879,28 @@ func registerTUIInputHooks(app *tview.Application, root tview.Primitive) *tview.
 		if listH > 12 {
 			listH = 12
 		}
-		// 操作提示行（与 CLI multiSelect 一致）
+		// 交互：空格切换勾选，回车确认，↑/↓ 移动（tview List 原生），Tab 切按钮，ESC 取消
+		list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			switch {
+			case event.Key() == tcell.KeyRune && event.Rune() == ' ':
+				// 空格：切换当前项勾选
+				cur := list.GetCurrentItem()
+				if cur >= 0 && cur < len(items) {
+					toggle(cur)
+				}
+				return nil
+			case event.Key() == tcell.KeyEnter:
+				// 回车：确认当前勾选
+				confirm()
+				return nil
+			}
+			return event
+		})
+		// 操作提示行
 		hint := tview.NewTextView().
 			SetDynamicColors(true).
 			SetTextAlign(tview.AlignCenter).
-			SetText("[yellow]回车勾选/取消，Tab 切换按钮，ESC 取消[-]")
+			SetText("[yellow]空格勾选/取消  回车确认  ↑/↓ 移动  Tab 切按钮  ESC 取消[-]")
 		buttons := tview.NewForm().
 			AddButton("确认", confirm).
 			AddButton("取消", cancel)
