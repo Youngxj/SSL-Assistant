@@ -898,9 +898,15 @@ func extractApacheCertPaths(content []byte, domain string) (string, string, bool
 }
 
 // 删除证书
+// TUI 交互模式下：直接列出证书勾选（可多选）批量删除，无需手动输入 ID；
+// CLI 模式：输入证书 ID 删除。
 func deleteCertificate() error {
 	if err := initGuide(false); err != nil {
 		return err
+	}
+	// TUI 模式：勾选批量删除
+	if utils.TUIMultiSelect != nil {
+		return deleteCertificatesBySelection()
 	}
 	// 输入证书 ID
 	idStr := utils.ReadInput("请输入证书 ID: ", "")
@@ -920,9 +926,59 @@ func deleteCertificate() error {
 		return fmt.Errorf("获取证书信息失败: %s", err)
 	}
 
-	// 删除证书
-	err = db.DeleteCertificateFromDBWrapper(id)
+	// 删除证书（含文件）
+	if err := deleteCertRecord(cert); err != nil {
+		return err
+	}
+
+	color.Green("删除证书成功")
+	return nil
+}
+
+// deleteCertificatesBySelection TUI 模式：列出全部证书勾选批量删除。
+// 勾选后确认，逐个删除（含证书文件）。
+func deleteCertificatesBySelection() error {
+	certs, err := db.GetAllCertificatesWrapper()
 	if err != nil {
+		return fmt.Errorf("获取证书列表失败: %s", err)
+	}
+	if len(certs) == 0 {
+		color.Yellow("暂无证书可删除\n")
+		return nil
+	}
+	// 构建勾选项："ID  域名  过期时间"
+	items := make([]string, len(certs))
+	for i, c := range certs {
+		expire := time.Unix(c.ExpireTime, 0).Format("2006-01-02")
+		items[i] = fmt.Sprintf("[%d] %s  (到期 %s)", c.ID, c.Domain, expire)
+	}
+	selected := utils.MultiSelectCheckbox(items, "勾选要删除的证书（空格勾选/取消，回车确认）")
+	if len(selected) == 0 {
+		color.Yellow("未选择任何证书，已跳过删除\n")
+		return nil
+	}
+	// 确认删除
+	if !utils.Confirm(fmt.Sprintf("确认删除选中的 %d 个证书？", len(selected))) {
+		color.Yellow("已取消删除\n")
+		return nil
+	}
+	// 逐个删除
+	for _, idx := range selected {
+		if err := deleteCertRecord(certs[idx]); err != nil {
+			color.Red("删除证书 %s 失败: %v\n", certs[idx].Domain, err)
+			continue
+		}
+		color.Green("已删除: %s\n", certs[idx].Domain)
+	}
+	color.Green("共删除 %d 个证书\n", len(selected))
+	return nil
+}
+
+// deleteCertRecord 删除单个证书（数据库记录 + 证书文件）：
+// 删除文件前检查是否被其他记录共享（多域名复用同一证书文件时只删记录、保留文件）。
+func deleteCertRecord(cert db.Certificate) error {
+	// 删除证书
+	if err := db.DeleteCertificateFromDBWrapper(cert.ID); err != nil {
 		return fmt.Errorf("删除证书失败: %s", err)
 	}
 
@@ -938,8 +994,6 @@ func deleteCertificate() error {
 			removeCertFile(cert.KeyPath)
 		}
 	}
-
-	color.Green("删除证书成功")
 	return nil
 }
 

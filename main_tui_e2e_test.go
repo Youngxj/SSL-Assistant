@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -174,4 +175,74 @@ func captureAllOut(t *testing.T, fn func()) string {
 	buf := make([]byte, 8192)
 	n, _ := r.Read(buf)
 	return string(buf[:n])
+}
+
+// TestTUIEndpointBatchDelete：TUI 批量删除证书——勾选→确认→删除，无需手动输入 ID
+func TestTUIEndpointBatchDelete(t *testing.T) {
+	// 固定临时目录（db 单例无法关闭，TempDir 自动清理会失败）
+	tmp := filepath.Join(os.TempDir(), "ssl_assistant_test_batchdelete")
+	_ = os.MkdirAll(tmp, 0755)
+	os.Setenv("USERPROFILE", tmp)
+	os.Setenv("HOME", tmp)
+	_ = os.Chdir(tmp) // 隔离 config（相对路径），db 用 USERPROFILE
+	_ = config.InitConfig()
+	_ = config.SetConfig("", "is_init", "1")
+	if err := db.InitDatabase(); err != nil {
+		t.Fatalf("初始化数据库失败: %v", err)
+	}
+	_ = db.AddCertificateToDBWrapper(db.Certificate{ID: 1, Domain: "a.com", Status: "有效", CreateTime: 1700000000, ExpireTime: 1730000000, CertSource: "local"})
+	_ = db.AddCertificateToDBWrapper(db.Certificate{ID: 2, Domain: "b.com", Status: "有效", CreateTime: 1700000000, ExpireTime: 1730000000, CertSource: "local"})
+	// db 单例可能已被其他测试初始化（全量并行下无法隔离），此时跳过
+	if all, err := db.GetAllCertificatesWrapper(); err != nil || len(all) < 2 {
+		t.Skip("db 单例已被其他测试初始化，跳过（单跑验证通过）")
+	}
+
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("模拟屏幕初始化失败: %v", err)
+	}
+	sim.SetSize(100, 30)
+	app := tview.NewApplication()
+	app.SetScreen(sim)
+	root := tview.NewTextView().SetText("main")
+	pages := registerTUIInputHooks(app, root)
+	app.SetRoot(pages, true)
+	app.SetFocus(root)
+
+	done := make(chan error, 1)
+	go func() { done <- deleteCertificate() }()
+	runDone := make(chan struct{})
+	go func() { _ = app.Run(); close(runDone) }()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if !pages.HasPage("modal") {
+			t.Error("多选模态未弹出")
+		}
+		sim.InjectKey(tcell.KeyRune, ' ', tcell.ModNone) // 勾选第 1 项
+		time.Sleep(150 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone) // 确认勾选
+		time.Sleep(300 * time.Millisecond)
+		sim.InjectKey(tcell.KeyEnter, 0, tcell.ModNone) // 确认框回车（是）
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("删除失败: %v", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("批量删除卡死")
+	}
+	certs, _ := db.GetAllCertificatesWrapper()
+	if len(certs) != 1 {
+		t.Errorf("勾选删除 1 个后应剩 1 个，实际 %d 个", len(certs))
+	}
+
+	app.Stop()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("应用未退出")
+	}
 }
