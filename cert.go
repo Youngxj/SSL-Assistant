@@ -1069,9 +1069,14 @@ func showPlatformStatus() {
 
 // 查看证书：展示证书表格与平台状态。
 // 菜单操作已合并到主菜单（runInteractiveMenu），此处仅负责展示，返回后由调用方继续。
+// TUI 交互模式下证书列表已在主屏 tview.Table 实时显示，跳过重复的表格/平台状态输出；
+// CLI 模式（如 `SSL-Assistant show`）保留表格输出。
 func showCertificates() error {
 	if err := initGuide(false); err != nil {
 		return err
+	}
+	if utils.TUIReadInput != nil {
+		return nil // TUI 下主屏已显示证书列表，无需重复输出
 	}
 	getCertificates()
 	showPlatformStatus()

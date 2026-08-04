@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"ssl_assistant/config"
@@ -135,4 +136,42 @@ func TestTUIModalCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("应用未退出")
 	}
+}
+
+// TestShowCertificatesTUINoOutput：TUI 模式下 showCertificates 不输出表格——
+// 证书列表已在主屏 tview.Table 显示，避免重复输出（CLI 模式保留表格）。
+// 只验证 TUI 分支（不依赖 db 单例，initGuide 通过后 TUI 分支即 return nil）。
+func TestShowCertificatesTUINoOutput(t *testing.T) {
+	// 隔离 config（相对路径），标记已初始化
+	tmp := t.TempDir()
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir 失败: %v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	_ = config.InitConfig()
+	_ = config.SetConfig("", "is_init", "1")
+
+	// TUI 模式：注册钩子后 showCertificates 应无输出（TUI 分支 return nil）
+	utils.TUIReadInput = func(p, d string) string { return d }
+	defer func() { utils.TUIReadInput = nil }()
+	tuiOut := captureAllOut(t, func() { _ = showCertificates() })
+	if len(tuiOut) != 0 {
+		t.Errorf("TUI 模式下 showCertificates 不应输出，实际: %q", tuiOut)
+	}
+}
+
+// captureAllOut 捕获函数写 os.Stdout 与 color.Output 的全部输出
+func captureAllOut(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, _ := os.Pipe()
+	oldOut, oldColor := os.Stdout, color.Output
+	os.Stdout = w
+	color.Output = w
+	fn()
+	w.Close()
+	os.Stdout, color.Output = oldOut, oldColor
+	buf := make([]byte, 8192)
+	n, _ := r.Read(buf)
+	return string(buf[:n])
 }
